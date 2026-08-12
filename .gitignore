@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.vscode/
+.wrangler/
+
+# Datos de obra: nunca al repositorio.
+# Contienen precios y contactos comerciales de proveedores.
+*.xlsx
+~$*
+seed-data/
