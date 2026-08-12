@@ -8,6 +8,26 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      /*
+       * Corre ANTES de cargar la aplicación.
+       * Los enlaces de invitación y de recuperación traen sus datos en el
+       * fragmento (#access_token=...&type=invite). supabase-js lo consume y lo
+       * borra al arrancar, así que si no se captura aquí, después ya no existe
+       * y un invitado entraría sin definir nunca su contraseña.
+       */
+      (function () {
+        try {
+          var h = new URLSearchParams(location.hash.replace(/^#/, ""));
+          var tipo = h.get("type");
+          var err = h.get("error_description") || h.get("error");
+          if (tipo) sessionStorage.setItem("auth_tipo_enlace", tipo);
+          if (err) sessionStorage.setItem("auth_error_enlace", err);
+        } catch (e) {
+          /* sessionStorage bloqueado: el flujo normal de login sigue sirviendo */
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -67,7 +67,13 @@ const filasProv = Object.entries(provs).map(([id, p]) =>
   `  ('${PROYECTO}', ${S(id)}, ${S(p.nom)}, ${S(p.ciu)}, ${S(p.tipo)}, ${S(p.tel)}, ${S(p.wa)}, ` +
   `${S(p.mail)}, ${S(p.web)}, ${S(p.rapido)}, ${S(p.fuente)}, ${S(p.notas)})`
 );
-L.push(filasProv.join(",\n") + "\non conflict (project_id, ext_id) do nothing;\n");
+// El índice único de suppliers es PARCIAL (where ext_id is not null), así que
+// el ON CONFLICT debe repetir el mismo predicado o PostgreSQL no lo reconoce
+// y lanza 42P10.
+L.push(
+  filasProv.join(",\n") +
+    "\non conflict (project_id, ext_id) where ext_id is not null do nothing;\n"
+);
 
 // --- Ítems -------------------------------------------------------------------
 L.push(`\n-- --- Ítems (${items.length}) ---`);

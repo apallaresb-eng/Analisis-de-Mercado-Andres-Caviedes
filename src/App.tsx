@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { vieneDeInvitacion } from "./lib/enlaceAuth";
 import Login from "./pages/Login";
 import SetPassword from "./pages/SetPassword";
 import Dashboard from "./pages/Dashboard";
@@ -9,6 +10,11 @@ function Protegido({ children }: { children: React.ReactNode }) {
 
   if (loading) return <div className="center-note">Cargando…</div>;
   if (!session) return <Navigate to="/entrar" replace />;
+
+  // Llegó por invitación o recuperación: tiene sesión válida pero todavía no
+  // ha definido contraseña. Sin esto entraría al tablero y nunca podría volver
+  // a ingresar por su cuenta.
+  if (vieneDeInvitacion()) return <Navigate to="/definir-clave" replace />;
 
   // El perfil aún no llegó (recién invitado, o el trigger no alcanzó a correr).
   if (!profile) {

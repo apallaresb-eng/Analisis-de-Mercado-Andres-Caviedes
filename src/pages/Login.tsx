@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../lib/auth";
+import { errorEnlace } from "../lib/enlaceAuth";
 
 export default function Login() {
   const { signIn, sendReset } = useAuth();
@@ -8,6 +9,10 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  // Si llegó desde un enlace de invitación vencido, el motivo se explica aquí:
+  // de lo contrario vería el login sin entender por qué no entró.
+  const [avisoEnlace, setAvisoEnlace] = useState<string | null>(errorEnlace);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -49,6 +54,19 @@ export default function Login() {
           El acceso es solo para personal autorizado. Si no tiene cuenta, pídale al
           administrador que lo invite: no hay registro abierto.
         </p>
+
+        {avisoEnlace && (
+          <div className="banner is-crit" style={{ marginBottom: 14 }}>
+            {avisoEnlace}
+            <button
+              className="btn ghost"
+              style={{ marginTop: 8, padding: "5px 10px", fontSize: 12 }}
+              onClick={() => setAvisoEnlace(null)}
+            >
+              Entendido
+            </button>
+          </div>
+        )}
 
         <form className="login-form" onSubmit={onSubmit}>
           <label>
