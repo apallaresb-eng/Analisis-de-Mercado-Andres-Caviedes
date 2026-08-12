@@ -7,6 +7,7 @@ import { ToastProvider, useToast } from "../components/Toast";
 import DetalleItem from "../components/DetalleItem";
 import ListaLlamadas from "../components/ListaLlamadas";
 import Alertas from "../components/Alertas";
+import CuentaModal from "../components/CuentaModal";
 
 type Vista = "cola" | "llamadas" | "alertas" | "proyecto";
 type Filtro = "todos" | "sinprecio" | "conprecio" | "rojo" | "abierto";
@@ -33,6 +34,7 @@ function Contenido() {
   const [categoria, setCategoria] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [seleccion, setSeleccion] = useState<string | null>(null);
+  const [mostrarCuenta, setMostrarCuenta] = useState(false);
 
   // --- carga inicial --------------------------------------------------------
   useEffect(() => {
@@ -140,8 +142,12 @@ function Contenido() {
               ? "Todavía no hay ninguna obra cargada. Aplique el SQL de siembra o importe un Excel."
               : "El administrador aún no ha cargado ninguna obra."}
           </p>
-          <button className="btn ghost" onClick={() => void signOut()}>Cerrar sesión</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn ghost" onClick={() => setMostrarCuenta(true)}>Mi cuenta</button>
+            <button className="btn ghost" onClick={() => void signOut()}>Cerrar sesión</button>
+          </div>
         </div>
+        {mostrarCuenta && <CuentaModal onCerrar={() => setMostrarCuenta(false)} />}
       </div>
     );
   }
@@ -185,9 +191,12 @@ function Contenido() {
             </div>
           </div>
 
+          <button className="btn ghost" onClick={() => setMostrarCuenta(true)}>Mi cuenta</button>
           <button className="btn ghost" onClick={() => void signOut()}>Salir</button>
         </div>
       </div>
+
+      {mostrarCuenta && <CuentaModal onCerrar={() => setMostrarCuenta(false)} />}
 
       <div className="wrap">
         <div className="metrics">

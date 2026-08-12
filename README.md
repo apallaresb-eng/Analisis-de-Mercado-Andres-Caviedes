@@ -67,20 +67,50 @@ npm run dev
 
 Abre en <http://localhost:5173>.
 
-### 7. Crear al primer administrador
+### 7. Crear usuarios
 
 El sistema crea a **todos** los usuarios como `operario` a propósito: nadie se
 vuelve administrador solo.
 
-1. Invite a la primera persona desde **Authentication → Users → Invite user**.
+Hay dos formas de dar de alta a una persona. Cuál usar depende de si tiene un
+dominio propio para enviar correo.
+
+#### 7a. Por invitación (requiere dominio propio + SMTP configurado)
+
+El correo integrado de Supabase permite solo **2 envíos por hora** en todos
+los planes: sirve para una prueba puntual, no para invitar a un equipo. Para
+usarlo de verdad hay que conectar un proveedor de correo real (Resend, con
+plan gratuito) en **Authentication → Settings → SMTP Settings**, y eso exige
+un dominio propio verificado — el remitente de prueba de Resend
+(`onboarding@resend.dev`) solo entrega al dueño de esa cuenta de Resend, a
+nadie más.
+
+1. Con el SMTP configurado, invite desde **Authentication → Users → Invite user**.
 2. Esa persona abre el correo, define su contraseña y entra una vez.
-3. En **SQL Editor**, ejecute:
+
+#### 7b. Manual, sin correo (lo que se usa mientras no haya dominio propio)
+
+1. **Authentication → Users → Add user** (no "Invite" — "Add user" crea la
+   cuenta directamente).
+2. Escriba el correo y una **contraseña temporal**.
+3. Marque **Auto Confirm User**. Sin esto la cuenta queda sin confirmar y no
+   puede entrar.
+4. Entréguele el correo y la contraseña temporal por un canal seguro
+   (verbalmente, en persona, WhatsApp cifrado — no por correo sin cifrar).
+5. Esa persona entra con esos datos y, ya dentro, cambia la contraseña desde
+   **Mi cuenta** en la barra superior. No hace falta que el administrador
+   vuelva a intervenir para eso.
+
+#### Promover al primer administrador
+
+Con la primera persona ya registrada (por cualquiera de las dos vías) y habiendo
+entrado una vez, en **SQL Editor** ejecute:
 
 ```sql
 update public.profiles set role = 'admin' where email = 'correo@empresa.com';
 ```
 
-4. Verifique:
+Verifique:
 
 ```sql
 select email, role, active from public.profiles order by created_at;
