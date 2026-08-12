@@ -1,0 +1,15 @@
+# Cabeceras de seguridad.
+# La aplicación expone precios y contactos comerciales de proveedores, así que
+# conviene endurecerla aunque el acceso ya esté detrás de credenciales.
+
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()
+
+# Los archivos de assets llevan hash en el nombre: cambian de nombre al cambiar
+# de contenido, así que se pueden cachear indefinidamente sin riesgo de servir
+# una versión vieja.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

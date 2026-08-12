@@ -1,0 +1,18 @@
+{
+  // Configuración de despliegue en Cloudflare Workers (Static Assets).
+  //
+  // El enrutado de la aplicación (SPA) se resuelve AQUÍ, no con un archivo
+  // _redirects. La regla clásica de Pages `/* /index.html 200` es inválida en
+  // Workers: Cloudflare detecta que /index.html se normaliza a / y vuelve a
+  // disparar la misma regla, en bucle infinito, y rechaza el despliegue.
+  //
+  // "not_found_handling": "single-page-application" hace lo correcto: cuando la
+  // ruta pedida no corresponde a un archivo real (por ejemplo /entrar o
+  // /definir-clave), sirve index.html con estado 200 y React Router se encarga.
+  "name": "compra-obras",
+  "compatibility_date": "2026-08-12",
+  "assets": {
+    "directory": "./dist/",
+    "not_found_handling": "single-page-application"
+  }
+}
