@@ -114,36 +114,56 @@ export interface ItemQuoteStats {
   median_delivered: number | null;
 }
 
-/** Tipado mínimo para supabase-js: evita `any` en las consultas. */
+export interface ImportRow {
+  id: string;
+  project_id: string;
+  filename: string | null;
+  sheet_name: string | null;
+  header_row: number | null;
+  rows_read: number | null;
+  rows_imported: number | null;
+  rows_skipped: number | null;
+  mapping: Record<string, string> | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ItemSupplierRow {
+  item_id: string;
+  supplier_id: string;
+}
+
+/**
+ * Tipado para supabase-js v2.
+ *
+ * Cada tabla debe declarar Row, Insert, Update y Relationships: si falta
+ * Relationships, la inferencia colapsa a `never` y todas las escrituras fallan
+ * a compilar.
+ */
+type Tabla<R, I = Partial<R>, U = Partial<R>> = {
+  Row: R;
+  Insert: I;
+  Update: U;
+  Relationships: [];
+};
+
 export interface Database {
   public: {
     Tables: {
-      profiles: { Row: Profile; Insert: Partial<Profile> & { id: string }; Update: Partial<Profile> };
-      projects: { Row: Project; Insert: Partial<Project> & { name: string }; Update: Partial<Project> };
-      suppliers: { Row: Supplier; Insert: Partial<Supplier> & { project_id: string; name: string }; Update: Partial<Supplier> };
-      items: { Row: Item; Insert: Partial<Item> & { project_id: string; code: string; description: string }; Update: Partial<Item> };
-      item_suppliers: {
-        Row: { item_id: string; supplier_id: string };
-        Insert: { item_id: string; supplier_id: string };
-        Update: Partial<{ item_id: string; supplier_id: string }>;
-      };
-      quotes: { Row: Quote; Insert: Partial<Quote> & { item_id: string }; Update: Partial<Quote> };
-      activity_log: { Row: ActivityRow; Insert: Partial<ActivityRow>; Update: Partial<ActivityRow> };
-      imports: {
-        Row: {
-          id: string; project_id: string; filename: string | null; sheet_name: string | null;
-          header_row: number | null; rows_read: number | null; rows_imported: number | null;
-          rows_skipped: number | null; mapping: Record<string, string> | null;
-          created_by: string | null; created_at: string;
-        };
-        Insert: Record<string, unknown>;
-        Update: Record<string, unknown>;
-      };
+      profiles: Tabla<Profile>;
+      projects: Tabla<Project>;
+      suppliers: Tabla<Supplier>;
+      items: Tabla<Item>;
+      item_suppliers: Tabla<ItemSupplierRow, ItemSupplierRow>;
+      quotes: Tabla<Quote>;
+      activity_log: Tabla<ActivityRow>;
+      imports: Tabla<ImportRow>;
     };
     Views: {
-      item_quote_stats: { Row: ItemQuoteStats };
+      item_quote_stats: { Row: ItemQuoteStats; Relationships: [] };
     };
     Functions: Record<string, never>;
     Enums: { user_role: UserRole; item_state: ItemState };
+    CompositeTypes: Record<string, never>;
   };
 }
