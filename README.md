@@ -27,22 +27,34 @@ Estos pasos requieren crear cuentas y manejar credenciales, así que los hace us
 
 ### 3. Cerrar el registro público — paso crítico
 
-En **Authentication → Providers → Email**:
+En **Authentication → Sign In / Providers → Email** hay **dos interruptores
+distintos**. Es fácil confundirlos y apagar el que no era:
 
-- **Enable sign ups** → **DESACTIVADO**
-- **Confirm email** → **ACTIVADO**
+| Interruptor | Debe quedar | Qué controla |
+|---|---|---|
+| **Enable Email provider** | **ACTIVADO** | Que se pueda *entrar* con correo y contraseña |
+| **Allow new users to sign up** | **DESACTIVADO** | Que alguien pueda *auto-registrarse* |
+| **Confirm email** | ACTIVADO | Que la cuenta se verifique |
 
-> Si deja el registro abierto, cualquier persona con la dirección de la página
-> puede crearse una cuenta y ver los precios y contactos de proveedores. Este es
-> el ajuste que sostiene todo el control de acceso.
+> Si apaga **Enable Email provider** por error, nadie puede iniciar sesión y el
+> login responde `Email logins are disabled`.
+>
+> Si deja **Allow new users to sign up** encendido, cualquier persona con la
+> dirección de la página puede crearse una cuenta y ver los precios y contactos
+> de proveedores. Ese es el ajuste que sostiene todo el control de acceso.
 
 ### 4. Configurar las URL de redirección
 
 En **Authentication → URL Configuration**:
 
-- **Site URL:** la dirección de su sitio en Cloudflare Pages
-- **Redirect URLs:** agregue `https://SU-SITIO.pages.dev/definir-clave`
-  y `http://localhost:5173/definir-clave` para pruebas locales.
+- **Site URL:** la dirección pública del sitio
+  (ej. `https://compra-obras.apallaresb.workers.dev`)
+- **Redirect URLs:** agregue la dirección pública con `/**`
+  (ej. `https://compra-obras.apallaresb.workers.dev/**`)
+  y `http://localhost:5173/**` para pruebas locales.
+
+> Si esto queda apuntando a `localhost`, los enlaces de recuperación de
+> contraseña llegarán apuntando al computador de quien configuró, no al sitio.
 
 ### 5. Conectar el frontend
 
