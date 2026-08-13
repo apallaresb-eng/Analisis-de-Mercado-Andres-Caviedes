@@ -9,6 +9,7 @@ import ListaLlamadas from "../components/ListaLlamadas";
 import Alertas from "../components/Alertas";
 import CuentaModal from "../components/CuentaModal";
 import GestionObras from "../components/GestionObras";
+import EditorItem from "../components/EditorItem";
 
 type Vista = "cola" | "llamadas" | "alertas" | "proyecto" | "obras";
 type Filtro = "todos" | "sinprecio" | "conprecio" | "rojo" | "abierto";
@@ -36,6 +37,7 @@ function Contenido() {
   const [busqueda, setBusqueda] = useState("");
   const [seleccion, setSeleccion] = useState<string | null>(null);
   const [mostrarCuenta, setMostrarCuenta] = useState(false);
+  const [creandoItem, setCreandoItem] = useState(false);
 
   // --- carga inicial --------------------------------------------------------
   useEffect(() => {
@@ -228,6 +230,17 @@ function Contenido() {
 
       {mostrarCuenta && <CuentaModal onCerrar={() => setMostrarCuenta(false)} />}
 
+      {creandoItem && proyecto && (
+        <EditorItem
+          proyectoId={proyecto.id}
+          onCerrar={() => setCreandoItem(false)}
+          onGuardado={async (nuevo) => {
+            await recargar();
+            setSeleccion(nuevo.id);
+          }}
+        />
+      )}
+
       <div className="wrap">
         <div className="metrics">
           <Tile n={conteos.total} cap="Ítems en el estudio" tone="var(--ink)" stripe="var(--line)" />
@@ -304,6 +317,9 @@ function Contenido() {
                   </option>
                 ))}
               </select>
+              {isAdmin && (
+                <button className="btn" onClick={() => setCreandoItem(true)}>+ Ítem</button>
+              )}
             </div>
 
             <div className="split">
@@ -361,9 +377,11 @@ function Contenido() {
                   item={itemSel}
                   proyecto={proyecto}
                   proveedores={provsDelItem}
+                  todosProveedores={datos?.proveedores ?? []}
                   stats={datos?.stats[itemSel.id]}
                   onCambio={aplicarCambio}
                   onRecargarStats={recargarStats}
+                  onRecargarTodo={recargar}
                 />
               ) : (
                 <div className="detail">

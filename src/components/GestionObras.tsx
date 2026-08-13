@@ -21,6 +21,10 @@ export default function GestionObras({
   const { session } = useAuth();
   const [creando, setCreando] = useState(false);
   const [importando, setImportando] = useState(false);
+  const [porBorrar, setPorBorrar] = useState<Project | null>(null);
+
+  const activas = proyectos.filter((p) => !p.archived_at);
+  const archivadas = proyectos.filter((p) => p.archived_at);
 
   async function alternarArchivo(p: Project) {
     try {
@@ -33,23 +37,14 @@ export default function GestionObras({
   }
 
   async function eliminar(p: Project) {
-    // Doble confirmación: escribir el nombre evita el borrado por clic
-    // accidental, que aquí es irreversible y se lleva ítems y cotizaciones.
-    const escrito = prompt(
-      `Esto borra la obra "${p.name}" con TODOS sus ítems, proveedores y cotizaciones.\n` +
-      `No se puede deshacer.\n\nPara confirmar, escriba el nombre exacto de la obra:`
-    );
-    if (escrito === null) return;
-    if (escrito.trim() !== p.name) {
-      avisarError(new Error("El nombre no coincide. No se borró nada."));
-      return;
-    }
     try {
       await borrarObra(p.id);
       await onCambio();
       avisar("Obra eliminada");
     } catch (e) {
       avisarError(e);
+    } finally {
+      setPorBorrar(null);
     }
   }
 
@@ -83,60 +78,44 @@ export default function GestionObras({
         />
       )}
 
+      {/* Archivadas aparte: al archivar, la obra cambia de posición en la lista
+          y solo se atenúa, así que parecía que el botón no hacía nada. */}
+      {activas.length > 0 && <span className="lbl" style={{ display: "block", marginBottom: 6 }}>
+        En uso — {activas.length}
+      </span>}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 12 }}>
-        {proyectos.map((p) => {
-          const esActual = p.id === proyectoActual?.id;
-          return (
-            <div
-              key={p.id}
-              className="card"
-              style={{
-                borderTop: `3px solid ${esActual ? "var(--accent)" : "var(--line)"}`,
-                opacity: p.archived_at ? 0.65 : 1,
-              }}
-            >
-              <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-                <h3 style={{ fontSize: 14.5, flex: 1 }}>{p.name}</h3>
-                {esActual && <span className="pill" style={{ ["--pc" as string]: "var(--accent)", ["--pl" as string]: "var(--accent)" }}>En pantalla</span>}
-                {p.archived_at && <span className="pill">Archivada</span>}
-              </div>
-
-              <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", fontSize: 12, marginTop: 10 }}>
-                <dt style={{ color: "var(--faint)", fontWeight: 600 }}>Contrato</dt>
-                <dd style={{ margin: 0 }} className="mono">{p.contract_no ?? "—"}</dd>
-                <dt style={{ color: "var(--faint)", fontWeight: 600 }}>Ubicación</dt>
-                <dd style={{ margin: 0 }}>
-                  {[p.municipality, p.department].filter(Boolean).join(", ") || "—"}
-                </dd>
-                <dt style={{ color: "var(--faint)", fontWeight: 600 }}>Creada</dt>
-                <dd style={{ margin: 0 }}>{fecha(p.created_at)}</dd>
-                {esActual && (
-                  <>
-                    <dt style={{ color: "var(--faint)", fontWeight: 600 }}>Ítems</dt>
-                    <dd style={{ margin: 0 }} className="mono">{nItemsActual}</dd>
-                  </>
-                )}
-              </dl>
-
-              <div className="btns">
-                {!esActual && (
-                  <button className="mini" onClick={() => onSeleccionar(p.id)}>Abrir</button>
-                )}
-                <button className="mini" onClick={() => void alternarArchivo(p)}>
-                  {p.archived_at ? "Reactivar" : "Archivar"}
-                </button>
-                <button
-                  className="mini"
-                  style={{ borderColor: "var(--crit-line)", color: "var(--crit)" }}
-                  onClick={() => void eliminar(p)}
-                >
-                  Borrar
-                </button>
-              </div>
-            </div>
-          );
-        })}
+        {activas.map((p) => (
+          <TarjetaObra
+            key={p.id} obra={p}
+            esActual={p.id === proyectoActual?.id}
+            nItems={nItemsActual}
+            onAbrir={() => onSeleccionar(p.id)}
+            onArchivar={() => void alternarArchivo(p)}
+            onBorrar={() => setPorBorrar(p)}
+          />
+        ))}
       </div>
+
+      {archivadas.length > 0 && (
+        <>
+          <span className="lbl" style={{ display: "block", margin: "22px 0 6px" }}>
+            Archivadas — {archivadas.length} · no aparecen en el selector del día a día
+          </span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 12 }}>
+            {archivadas.map((p) => (
+              <TarjetaObra
+                key={p.id} obra={p}
+                esActual={p.id === proyectoActual?.id}
+                nItems={nItemsActual}
+                onAbrir={() => onSeleccionar(p.id)}
+                onArchivar={() => void alternarArchivo(p)}
+                onBorrar={() => setPorBorrar(p)}
+              />
+            ))}
+          </div>
+        </>
+      )}
 
       {importando && proyectoActual && session && (
         <ImportadorExcel
@@ -145,7 +124,145 @@ export default function GestionObras({
           onImportado={onCambio}
         />
       )}
+
+      {porBorrar && (
+        <DialogoBorrarObra
+          obra={porBorrar}
+          nItems={porBorrar.id === proyectoActual?.id ? nItemsActual : null}
+          onCancelar={() => setPorBorrar(null)}
+          onConfirmar={() => void eliminar(porBorrar)}
+        />
+      )}
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+function TarjetaObra({
+  obra: p, esActual, nItems, onAbrir, onArchivar, onBorrar,
+}: {
+  obra: Project;
+  esActual: boolean;
+  nItems: number;
+  onAbrir: () => void;
+  onArchivar: () => void;
+  onBorrar: () => void;
+}) {
+  return (
+    <div
+      className="card"
+      style={{
+        borderTop: `3px solid ${esActual ? "var(--accent)" : "var(--line)"}`,
+        opacity: p.archived_at ? 0.7 : 1,
+      }}
+    >
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+        <h3 style={{ fontSize: 14.5, flex: 1 }}>{p.name}</h3>
+        {esActual && (
+          <span className="pill" style={{ ["--pc" as string]: "var(--accent)", ["--pl" as string]: "var(--accent)" }}>
+            En pantalla
+          </span>
+        )}
+        {p.archived_at && (
+          <span className="pill" style={{ ["--pc" as string]: "var(--warn)", ["--pl" as string]: "var(--warn-line)", ["--pb" as string]: "var(--warn-soft)" }}>
+            Archivada
+          </span>
+        )}
+      </div>
+
+      <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", fontSize: 12, marginTop: 10 }}>
+        <dt style={{ color: "var(--faint)", fontWeight: 600 }}>Contrato</dt>
+        <dd style={{ margin: 0 }} className="mono">{p.contract_no ?? "—"}</dd>
+        <dt style={{ color: "var(--faint)", fontWeight: 600 }}>Ubicación</dt>
+        <dd style={{ margin: 0 }}>
+          {[p.municipality, p.department].filter(Boolean).join(", ") || "—"}
+        </dd>
+        <dt style={{ color: "var(--faint)", fontWeight: 600 }}>Creada</dt>
+        <dd style={{ margin: 0 }}>{fecha(p.created_at)}</dd>
+        {esActual && (
+          <>
+            <dt style={{ color: "var(--faint)", fontWeight: 600 }}>Ítems</dt>
+            <dd style={{ margin: 0 }} className="mono">{nItems}</dd>
+          </>
+        )}
+      </dl>
+
+      <div className="btns">
+        {!esActual && <button className="mini" onClick={onAbrir}>Abrir</button>}
+        <button className="mini" onClick={onArchivar}>
+          {p.archived_at ? "Reactivar" : "Archivar"}
+        </button>
+        <button
+          className="mini"
+          style={{ borderColor: "var(--crit-line)", color: "var(--crit)" }}
+          onClick={onBorrar}
+        >
+          Borrar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------------------
+   Confirmación de borrado
+
+   Antes se pedía escribir el nombre exacto de la obra con prompt(). Era
+   imposible de superar: "Sede de Educación Superior — Simití" lleva raya larga,
+   un carácter que no está en el teclado. Ahora se pide una palabra tecleable y
+   se informa qué se pierde.
+   -------------------------------------------------------------------------- */
+
+function DialogoBorrarObra({
+  obra, nItems, onCancelar, onConfirmar,
+}: {
+  obra: Project;
+  nItems: number | null;
+  onCancelar: () => void;
+  onConfirmar: () => void;
+}) {
+  const [texto, setTexto] = useState("");
+  const puede = texto.trim().toUpperCase() === "BORRAR";
+
+  return (
+    <div
+      role="dialog" aria-modal="true" aria-label="Confirmar borrado de obra"
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,.5)",
+        display: "grid", placeItems: "center", zIndex: 110, padding: 20,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancelar(); }}
+    >
+      <div className="card" style={{ width: "100%", maxWidth: 460 }}>
+        <span className="lbl" style={{ color: "var(--crit)" }}>Acción irreversible</span>
+        <h2 style={{ fontSize: 18, margin: "4px 0 10px" }}>Borrar «{obra.name}»</h2>
+
+        <div className="banner is-crit">
+          Se borrará la obra junto con <b>todos sus ítems, proveedores, cotizaciones y
+          el registro de actividad</b>.
+          {nItems !== null && <> Actualmente tiene <b>{nItems} ítems</b>.</>}
+          <br /><br />
+          No hay copias de respaldo: <b>esto no se puede deshacer</b>.
+        </div>
+
+        <label style={{ display: "block", marginTop: 14 }}>
+          <span className="lbl">Para confirmar, escriba BORRAR</span>
+          <input
+            className="field" style={{ marginTop: 5 }} value={texto} autoFocus
+            onChange={(e) => setTexto(e.target.value)}
+            placeholder="BORRAR"
+          />
+        </label>
+
+        <div className="btns">
+          <button className="btn danger" disabled={!puede} onClick={onConfirmar}>
+            Borrar definitivamente
+          </button>
+          <button className="btn ghost" onClick={onCancelar}>Cancelar</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

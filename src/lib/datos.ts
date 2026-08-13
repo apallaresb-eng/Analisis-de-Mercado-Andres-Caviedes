@@ -95,6 +95,134 @@ export async function actualizarItem(itemId: string, cambio: CambioItem): Promis
   return data as Item;
 }
 
+/* ---------------------------------------------------------------------------
+   Edición de ítems
+
+   Los campos técnicos (código, descripción, unidad, especificación…) los
+   protege un trigger en la base: solo un administrador puede cambiarlos.
+   --------------------------------------------------------------------------- */
+
+export interface CamposItem {
+  code: string;
+  description: string;
+  unit?: string | null;
+  quantity?: number | null;
+  category?: string | null;
+  spec?: string | null;
+  iva_treatment?: string | null;
+  observation?: string | null;
+}
+
+export async function crearItem(
+  projectId: string,
+  campos: CamposItem
+): Promise<Item> {
+  const seq = await siguienteSeq(projectId);
+  const { data, error } = await supabase
+    .from("items")
+    .insert({ ...campos, project_id: projectId, seq })
+    .select()
+    .single();
+  if (error) throw new Error(traducir(error.message));
+  return data as Item;
+}
+
+export async function editarItemTecnico(
+  itemId: string,
+  campos: Partial<CamposItem>
+): Promise<Item> {
+  const { data, error } = await supabase
+    .from("items").update(campos).eq("id", itemId).select().single();
+  if (error) throw new Error(traducir(error.message));
+  return data as Item;
+}
+
+export async function borrarItem(itemId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("items").delete().eq("id", itemId).select("id");
+  if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "borrar el ítem");
+}
+
+/** Cuántas cotizaciones se perderían al borrar. Se muestra antes de confirmar. */
+export async function contarCotizaciones(itemId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("quotes").select("id", { count: "exact", head: true }).eq("item_id", itemId);
+  if (error) return 0;
+  return count ?? 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Edición de proveedores
+
+   Crear y corregir lo puede hacer cualquier usuario activo: quien está llamando
+   es quien descubre proveedores nuevos y detecta los teléfonos equivocados.
+   Borrar queda solo en manos del administrador.
+   --------------------------------------------------------------------------- */
+
+export interface CamposProveedor {
+  name: string;
+  city?: string | null;
+  kind?: string | null;
+  phone?: string | null;
+  whatsapp?: string | null;
+  email?: string | null;
+  web?: string | null;
+  fast_contact?: string | null;
+  contact_source?: string | null;
+  notes?: string | null;
+}
+
+export async function crearProveedor(
+  projectId: string,
+  campos: CamposProveedor
+): Promise<Supplier> {
+  const { data, error } = await supabase
+    .from("suppliers")
+    .insert({ ...campos, project_id: projectId })
+    .select()
+    .single();
+  if (error) throw new Error(traducir(error.message));
+  return data as Supplier;
+}
+
+export async function editarProveedor(
+  supplierId: string,
+  campos: Partial<CamposProveedor>
+): Promise<Supplier> {
+  const { data, error } = await supabase
+    .from("suppliers").update(campos).eq("id", supplierId).select().single();
+  if (error) throw new Error(traducir(error.message));
+  return data as Supplier;
+}
+
+export async function borrarProveedor(supplierId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("suppliers").delete().eq("id", supplierId).select("id");
+  if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "borrar el proveedor");
+}
+
+/* --- Vínculos ítem ↔ proveedor -------------------------------------------- */
+
+export async function vincularProveedor(itemId: string, supplierId: string): Promise<void> {
+  const { error } = await supabase
+    .from("item_suppliers").insert({ item_id: itemId, supplier_id: supplierId });
+  // Si ya estaba vinculado no es un error que valga la pena mostrar.
+  if (error && !error.message.toLowerCase().includes("duplicate")) {
+    throw new Error(traducir(error.message));
+  }
+}
+
+export async function desvincularProveedor(itemId: string, supplierId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("item_suppliers").delete()
+    .eq("item_id", itemId).eq("supplier_id", supplierId)
+    .select("item_id");
+  if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "quitar el proveedor del ítem");
+}
+
 /** Marca varios ítems a la vez (usado por la lista de llamadas). */
 export async function actualizarEstadoVarios(ids: string[], state: ItemState): Promise<void> {
   if (!ids.length) return;
@@ -169,17 +297,36 @@ export async function actualizarObra(id: string, cambio: Partial<NuevaObra>): Pr
 }
 
 export async function archivarObra(id: string, archivar: boolean): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("projects")
     .update({ archived_at: archivar ? new Date().toISOString() : null })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
   if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "archivar la obra");
 }
 
 /** Borra la obra y, en cascada, sus ítems, proveedores y cotizaciones. */
 export async function borrarObra(id: string): Promise<void> {
-  const { error } = await supabase.from("projects").delete().eq("id", id);
+  const { data, error } = await supabase
+    .from("projects").delete().eq("id", id).select("id");
   if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "borrar la obra");
+}
+
+/**
+ * Supabase NO devuelve error cuando Row Level Security filtra todas las filas:
+ * la operación "tiene éxito" afectando cero filas. Sin esta comprobación, una
+ * falta de permisos se ve exactamente igual que un cambio aplicado, y el
+ * usuario cree que guardó cuando no guardó nada.
+ */
+function exigirFilas(filas: unknown[] | null, accion: string): void {
+  if (!filas || filas.length === 0) {
+    throw new Error(
+      `No se pudo ${accion}: no se modificó ningún registro. ` +
+      `Es posible que no tenga permisos para esta acción.`
+    );
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -278,6 +425,8 @@ export async function siguienteSeq(projectId: string): Promise<number> {
  */
 function traducir(msg: string): string {
   const m = msg.toLowerCase();
+  if (m.includes("ficha técnica"))
+    return "Solo un administrador puede modificar la ficha técnica del ítem (código, descripción, unidad o especificación).";
   if (m.includes("row-level security") || m.includes("violates row-level"))
     return "No tiene permiso para esta acción. Solo un administrador puede hacerla.";
   if (m.includes("permission denied for column") || m.includes("permission denied"))

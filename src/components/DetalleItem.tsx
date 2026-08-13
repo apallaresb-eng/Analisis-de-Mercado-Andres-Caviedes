@@ -5,21 +5,30 @@ import {
 } from "../lib/dominio";
 import {
   actualizarItem, borrarCotizacion, cargarCotizaciones, crearCotizacion,
+  desvincularProveedor, vincularProveedor,
 } from "../lib/datos";
 import { useToast } from "./Toast";
 import { useAuth } from "../lib/auth";
+import EditorProveedor from "./EditorProveedor";
+import EditorItem from "./EditorItem";
 
 interface Props {
   item: Item;
   proyecto: Project;
+  /** Proveedores ya vinculados a este ítem. */
   proveedores: Supplier[];
+  /** Todos los de la obra, para poder vincular más. */
+  todosProveedores: Supplier[];
   stats?: ItemQuoteStats;
   onCambio: (it: Item) => void;
   onRecargarStats: () => void;
+  /** Recarga completa: hace falta al cambiar vínculos o crear proveedores. */
+  onRecargarTodo: () => void | Promise<void>;
 }
 
 export default function DetalleItem({
-  item, proyecto, proveedores, stats, onCambio, onRecargarStats,
+  item, proyecto, proveedores, todosProveedores, stats,
+  onCambio, onRecargarStats, onRecargarTodo,
 }: Props) {
   const { avisar, avisarError } = useToast();
   const { session, isAdmin } = useAuth();
@@ -29,6 +38,33 @@ export default function DetalleItem({
   const [cantidad, setCantidad] = useState(item.quantity?.toString() ?? "");
   const [cotizaciones, setCotizaciones] = useState<Quote[]>([]);
   const [mostrarForm, setMostrarForm] = useState(false);
+  const [creandoProv, setCreandoProv] = useState(false);
+  const [editandoProv, setEditandoProv] = useState<Supplier | null>(null);
+  const [editandoItem, setEditandoItem] = useState(false);
+
+  // Proveedores de la obra que todavía no están vinculados a este ítem.
+  const vinculados = new Set(proveedores.map((p) => p.id));
+  const disponibles = todosProveedores.filter((p) => !vinculados.has(p.id));
+
+  async function vincular(supplierId: string) {
+    try {
+      await vincularProveedor(item.id, supplierId);
+      await onRecargarTodo();
+      avisar("Proveedor vinculado al ítem");
+    } catch (e) {
+      avisarError(e);
+    }
+  }
+
+  async function quitarProveedor(p: Supplier) {
+    try {
+      await desvincularProveedor(item.id, p.id);
+      await onRecargarTodo();
+      avisar(`${p.name} ya no está en este ítem`);
+    } catch (e) {
+      avisarError(e);
+    }
+  }
 
   useEffect(() => {
     setNota(item.note ?? "");
@@ -96,9 +132,14 @@ export default function DetalleItem({
 
   return (
     <div className="detail">
-      <span className="lbl">
-        {item.code} · ítem {item.seq} · {item.category}
-      </span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <span className="lbl">
+          {item.code} · ítem {item.seq} · {item.category}
+        </span>
+        {isAdmin && (
+          <button className="mini" onClick={() => setEditandoItem(true)}>Editar ficha</button>
+        )}
+      </div>
       <h2>{item.description}</h2>
       {item.spec && (
         <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 5, lineHeight: 1.5 }}>
@@ -273,9 +314,21 @@ export default function DetalleItem({
       {/* --- proveedores -------------------------------------------------- */}
       <div className="sec">
         <span className="lbl">A quién llamar — {proveedores.length} proveedores</span>
+
+        {proveedores.length < 4 && (
+          <div className="note" style={{ marginBottom: 8, fontSize: 12 }}>
+            Con pocos proveedores basta que uno diga «eso no lo manejamos» para quedarse
+            sin opciones. Agregue los que vaya encontrando.
+          </div>
+        )}
+
         {proveedores.map((p) => (
           <div className="prov" key={p.id}>
-            <div className="pn">{p.name}</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+              <div className="pn" style={{ flex: 1 }}>{p.name}</div>
+              <button className="mini" onClick={() => setEditandoProv(p)}>Corregir</button>
+              <button className="mini" onClick={() => void quitarProveedor(p)}>Quitar</button>
+            </div>
             <div className="pc">
               {p.city}
               {p.kind ? ` · ${p.kind}` : ""}
@@ -300,6 +353,22 @@ export default function DetalleItem({
             </div>
           </div>
         ))}
+
+        <div style={{ display: "flex", gap: 7, marginTop: 8, flexWrap: "wrap" }}>
+          <select
+            className="field" style={{ flex: "1 1 180px" }}
+            value="" aria-label="Vincular un proveedor existente"
+            onChange={(e) => { if (e.target.value) void vincular(e.target.value); }}
+          >
+            <option value="">+ Vincular proveedor de la obra…</option>
+            {disponibles.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}{p.city ? ` — ${p.city}` : ""}</option>
+            ))}
+          </select>
+          <button className="btn ghost" onClick={() => setCreandoProv(true)}>
+            + Proveedor nuevo
+          </button>
+        </div>
       </div>
 
       {/* --- mensaje ------------------------------------------------------ */}
@@ -335,6 +404,39 @@ export default function DetalleItem({
           </button>
         </div>
       </div>
+
+      {creandoProv && (
+        <EditorProveedor
+          proyectoId={item.project_id}
+          onCerrar={() => setCreandoProv(false)}
+          onGuardado={async (nuevo) => {
+            // Se crea y se vincula de una vez: si lo está agregando desde un
+            // ítem, es porque lo quiere en ese ítem.
+            await vincularProveedor(item.id, nuevo.id);
+            await onRecargarTodo();
+          }}
+        />
+      )}
+
+      {editandoProv && (
+        <EditorProveedor
+          proyectoId={item.project_id}
+          proveedor={editandoProv}
+          onCerrar={() => setEditandoProv(null)}
+          onGuardado={onRecargarTodo}
+          onBorrado={onRecargarTodo}
+        />
+      )}
+
+      {editandoItem && (
+        <EditorItem
+          proyectoId={item.project_id}
+          item={item}
+          onCerrar={() => setEditandoItem(false)}
+          onGuardado={onCambio}
+          onBorrado={onRecargarTodo}
+        />
+      )}
     </div>
   );
 }
