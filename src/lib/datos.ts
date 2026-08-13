@@ -66,6 +66,27 @@ export async function cargarProyecto(projectId: string): Promise<DatosProyecto> 
   };
 }
 
+/** Todas las cotizaciones de la obra. Se usa al exportar. */
+export async function cargarCotizacionesDeProyecto(projectId: string): Promise<Quote[]> {
+  const { data: items, error: e1 } = await supabase
+    .from("items").select("id").eq("project_id", projectId);
+  if (e1) throw new Error(traducir(e1.message));
+
+  const ids = (items ?? []).map((i: { id: string }) => i.id);
+  if (!ids.length) return [];
+
+  // Se pide por lotes: una lista de mil ids no cabe en la URL de la consulta.
+  const LOTE = 200;
+  const todas: Quote[] = [];
+  for (let i = 0; i < ids.length; i += LOTE) {
+    const { data, error } = await supabase
+      .from("quotes").select("*").in("item_id", ids.slice(i, i + LOTE));
+    if (error) throw new Error(traducir(error.message));
+    todas.push(...((data ?? []) as Quote[]));
+  }
+  return todas;
+}
+
 export async function cargarCotizaciones(itemId: string): Promise<Quote[]> {
   const { data, error } = await supabase
     .from("quotes")

@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../lib/auth";
-import { cargarProyecto, listarProyectos, type DatosProyecto } from "../lib/datos";
+import {
+  cargarCotizacionesDeProyecto, cargarProyecto, listarProyectos, type DatosProyecto,
+} from "../lib/datos";
 import type { Item, Project } from "../lib/types";
 import { ESTADOS, ESTADO_POR_ID, alertaDe, cop, prioridad } from "../lib/dominio";
+import { useSincronizacion } from "../lib/realtime";
 import { ToastProvider, useToast } from "../components/Toast";
 import DetalleItem from "../components/DetalleItem";
 import ListaLlamadas from "../components/ListaLlamadas";
@@ -10,8 +13,9 @@ import Alertas from "../components/Alertas";
 import CuentaModal from "../components/CuentaModal";
 import GestionObras from "../components/GestionObras";
 import EditorItem from "../components/EditorItem";
+import PanelUsuarios from "../components/PanelUsuarios";
 
-type Vista = "cola" | "llamadas" | "alertas" | "proyecto" | "obras";
+type Vista = "cola" | "llamadas" | "alertas" | "proyecto" | "obras" | "usuarios";
 type Filtro = "todos" | "sinprecio" | "conprecio" | "rojo" | "abierto";
 
 export default function Dashboard() {
@@ -38,6 +42,34 @@ function Contenido() {
   const [seleccion, setSeleccion] = useState<string | null>(null);
   const [mostrarCuenta, setMostrarCuenta] = useState(false);
   const [creandoItem, setCreandoItem] = useState(false);
+  const [exportando, setExportando] = useState(false);
+
+  /** Descarga el estudio completo como libro de Excel con formato. */
+  async function exportar() {
+    if (!datos) return;
+    setExportando(true);
+    try {
+      // exceljs y el generador se descargan solo al exportar.
+      const [{ exportarEstudio, nombreArchivo }, cotizaciones] = await Promise.all([
+        import("../lib/exportar"),
+        cargarCotizacionesDeProyecto(datos.proyecto.id),
+      ]);
+      const blob = await exportarEstudio({ ...datos, cotizaciones });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = nombreArchivo(datos.proyecto);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      avisarError(e);
+    } finally {
+      setExportando(false);
+    }
+  }
 
   // --- carga inicial --------------------------------------------------------
   useEffect(() => {
@@ -71,6 +103,9 @@ function Contenido() {
     setCargando(true);
     void recargar();
   }, [proyectoId, recargar]);
+
+  // Trae los cambios que hagan otros dispositivos sin tener que recargar.
+  useSincronizacion(proyectoId, recargar);
 
   /** Reemplaza un ítem en memoria sin recargar todo el proyecto. */
   const aplicarCambio = useCallback((it: Item) => {
@@ -223,6 +258,9 @@ function Contenido() {
             </div>
           </div>
 
+          <button className="btn ghost" onClick={() => void exportar()} disabled={exportando}>
+            {exportando ? "Generando…" : "Exportar Excel"}
+          </button>
           <button className="btn ghost" onClick={() => setMostrarCuenta(true)}>Mi cuenta</button>
           <button className="btn ghost" onClick={() => void signOut()}>Salir</button>
         </div>
@@ -279,7 +317,8 @@ function Contenido() {
             ["proyecto", "La obra"],
             // Crear, importar y borrar obras es solo del administrador. La base
             // lo exige por RLS; ocultar la pestaña evita el intento fallido.
-            ...(isAdmin ? [["obras", "Gestionar obras"] as const] : []),
+            ...(isAdmin ? [["obras", "Gestionar obras"] as const,
+                           ["usuarios", "Personas"] as const] : []),
           ] as const).map(([v, lbl]) => (
             <button key={v} role="tab" aria-selected={vista === v} onClick={() => setVista(v)}>
               {lbl}
@@ -403,6 +442,8 @@ function Contenido() {
         )}
 
         {vista === "alertas" && datos && <Alertas items={datos.items} />}
+
+        {vista === "usuarios" && isAdmin && <PanelUsuarios />}
 
         {vista === "obras" && isAdmin && (
           <GestionObras
