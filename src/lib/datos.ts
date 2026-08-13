@@ -137,6 +137,141 @@ export async function borrarCotizacion(id: string): Promise<void> {
   if (error) throw new Error(traducir(error.message));
 }
 
+/* ---------------------------------------------------------------------------
+   Gestión de obras (solo administrador — RLS lo exige en la base)
+   --------------------------------------------------------------------------- */
+
+export interface NuevaObra {
+  name: string;
+  contract_no?: string | null;
+  contractor?: string | null;
+  supervision?: string | null;
+  municipality?: string | null;
+  department?: string | null;
+  notes?: string | null;
+}
+
+export async function crearObra(o: NuevaObra, userId: string): Promise<Project> {
+  const { data, error } = await supabase
+    .from("projects")
+    .insert({ ...o, created_by: userId })
+    .select()
+    .single();
+  if (error) throw new Error(traducir(error.message));
+  return data as Project;
+}
+
+export async function actualizarObra(id: string, cambio: Partial<NuevaObra>): Promise<Project> {
+  const { data, error } = await supabase
+    .from("projects").update(cambio).eq("id", id).select().single();
+  if (error) throw new Error(traducir(error.message));
+  return data as Project;
+}
+
+export async function archivarObra(id: string, archivar: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("projects")
+    .update({ archived_at: archivar ? new Date().toISOString() : null })
+    .eq("id", id);
+  if (error) throw new Error(traducir(error.message));
+}
+
+/** Borra la obra y, en cascada, sus ítems, proveedores y cotizaciones. */
+export async function borrarObra(id: string): Promise<void> {
+  const { error } = await supabase.from("projects").delete().eq("id", id);
+  if (error) throw new Error(traducir(error.message));
+}
+
+/* ---------------------------------------------------------------------------
+   Importación de ítems
+   --------------------------------------------------------------------------- */
+
+export interface ItemImportado {
+  code: string;
+  description: string;
+  unit?: string | null;
+  quantity?: number | null;
+  category?: string | null;
+  spec?: string | null;
+}
+
+export interface ResultadoImportacion {
+  insertados: number;
+  duplicados: number;
+  codigosDuplicados: string[];
+}
+
+/**
+ * Inserta por lotes. Los códigos que ya existen en la obra NO se tocan: el
+ * índice único (project_id, code) los rechaza y se reportan como duplicados,
+ * en vez de sobrescribir trabajo ya hecho.
+ */
+export async function importarItems(
+  projectId: string,
+  filas: ItemImportado[],
+  seqInicial = 1
+): Promise<ResultadoImportacion> {
+  const { data: existentes, error: errEx } = await supabase
+    .from("items").select("code").eq("project_id", projectId);
+  if (errEx) throw new Error(traducir(errEx.message));
+
+  const yaEstan = new Set((existentes ?? []).map((r: { code: string }) => r.code));
+  const duplicados: string[] = [];
+  const nuevos: ItemImportado[] = [];
+
+  for (const f of filas) {
+    if (yaEstan.has(f.code)) { duplicados.push(f.code); continue; }
+    yaEstan.add(f.code);           // evita duplicados dentro del mismo archivo
+    nuevos.push(f);
+  }
+
+  const LOTE = 500;
+  let insertados = 0;
+  for (let i = 0; i < nuevos.length; i += LOTE) {
+    const lote = nuevos.slice(i, i + LOTE).map((f, j) => ({
+      project_id: projectId,
+      seq: seqInicial + i + j,
+      code: f.code,
+      description: f.description,
+      unit: f.unit ?? null,
+      quantity: f.quantity ?? null,
+      category: f.category ?? null,
+      spec: f.spec ?? null,
+    }));
+    const { error } = await supabase.from("items").insert(lote);
+    if (error) throw new Error(traducir(error.message));
+    insertados += lote.length;
+  }
+
+  return { insertados, duplicados: duplicados.length, codigosDuplicados: duplicados.slice(0, 20) };
+}
+
+export async function registrarImportacion(reg: {
+  project_id: string;
+  filename: string;
+  sheet_name: string;
+  header_row: number;
+  rows_read: number;
+  rows_imported: number;
+  rows_skipped: number;
+  mapping: Record<string, string>;
+  created_by: string;
+}): Promise<void> {
+  // El registro es informativo: si falla, la importación ya ocurrió y no
+  // conviene hacerla fracasar por no poder dejar la bitácora.
+  const { error } = await supabase.from("imports").insert(reg);
+  if (error) console.warn("No se pudo registrar la importación:", error.message);
+}
+
+export async function siguienteSeq(projectId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("items").select("seq").eq("project_id", projectId)
+    .order("seq", { ascending: false }).limit(1);
+  if (error) return 1;
+  const max = (data?.[0] as { seq: number | null } | undefined)?.seq;
+  return (max ?? 0) + 1;
+}
+
 /**
  * Los errores de PostgREST llegan en inglés y hablan de políticas y columnas.
  * Para un operario eso no significa nada: se traduce a la causa real.

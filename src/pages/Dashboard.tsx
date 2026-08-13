@@ -8,8 +8,9 @@ import DetalleItem from "../components/DetalleItem";
 import ListaLlamadas from "../components/ListaLlamadas";
 import Alertas from "../components/Alertas";
 import CuentaModal from "../components/CuentaModal";
+import GestionObras from "../components/GestionObras";
 
-type Vista = "cola" | "llamadas" | "alertas" | "proyecto";
+type Vista = "cola" | "llamadas" | "alertas" | "proyecto" | "obras";
 type Filtro = "todos" | "sinprecio" | "conprecio" | "rojo" | "abierto";
 
 export default function Dashboard() {
@@ -132,16 +133,45 @@ function Contenido() {
   // --- render ---------------------------------------------------------------
   if (cargando) return <div className="center-note">Cargando el proyecto…</div>;
 
+  // Sin obras cargadas. El administrador debe poder crear la primera desde
+  // aquí: si solo se le mostrara un aviso, quedaría sin forma de empezar.
   if (proyectos.length === 0) {
+    if (isAdmin) {
+      return (
+        <>
+          <div className="bar">
+            <div className="bar-in">
+              <div className="brand">
+                <h1>Control de compras de obra</h1>
+                <div className="sub">
+                  Sin obras cargadas · {profile?.full_name || profile?.email} (administrador)
+                </div>
+              </div>
+              <button className="btn ghost" onClick={() => setMostrarCuenta(true)}>Mi cuenta</button>
+              <button className="btn ghost" onClick={() => void signOut()}>Salir</button>
+            </div>
+          </div>
+          {mostrarCuenta && <CuentaModal onCerrar={() => setMostrarCuenta(false)} />}
+          <div className="wrap" style={{ paddingTop: 20 }}>
+            <GestionObras
+              proyectos={[]}
+              proyectoActual={null}
+              nItemsActual={0}
+              onSeleccionar={setProyectoId}
+              onCambio={async () => {
+                setProyectos(await listarProyectos());
+                await recargar();
+              }}
+            />
+          </div>
+        </>
+      );
+    }
     return (
       <div className="login-wrap">
         <div className="login-card">
-          <h1>Sin proyectos</h1>
-          <p className="sub">
-            {isAdmin
-              ? "Todavía no hay ninguna obra cargada. Aplique el SQL de siembra o importe un Excel."
-              : "El administrador aún no ha cargado ninguna obra."}
-          </p>
+          <h1>Sin obras cargadas</h1>
+          <p className="sub">El administrador aún no ha cargado ninguna obra.</p>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn ghost" onClick={() => setMostrarCuenta(true)}>Mi cuenta</button>
             <button className="btn ghost" onClick={() => void signOut()}>Cerrar sesión</button>
@@ -234,6 +264,9 @@ function Contenido() {
             ["llamadas", "A quién llamo"],
             ["alertas", "Alertas y notas"],
             ["proyecto", "La obra"],
+            // Crear, importar y borrar obras es solo del administrador. La base
+            // lo exige por RLS; ocultar la pestaña evita el intento fallido.
+            ...(isAdmin ? [["obras", "Gestionar obras"] as const] : []),
           ] as const).map(([v, lbl]) => (
             <button key={v} role="tab" aria-selected={vista === v} onClick={() => setVista(v)}>
               {lbl}
@@ -352,6 +385,19 @@ function Contenido() {
         )}
 
         {vista === "alertas" && datos && <Alertas items={datos.items} />}
+
+        {vista === "obras" && isAdmin && (
+          <GestionObras
+            proyectos={proyectos}
+            proyectoActual={proyecto}
+            nItemsActual={conteos.total}
+            onSeleccionar={setProyectoId}
+            onCambio={async () => {
+              setProyectos(await listarProyectos());
+              await recargar();
+            }}
+          />
+        )}
 
         {vista === "proyecto" && proyecto && (
           <div className="card">
