@@ -148,6 +148,46 @@ export function contactoRapido(s: Supplier): string {
   return s.fast_contact || s.phone || s.email || s.web || "No registrado";
 }
 
+/* ---------------------------------------------------------------------------
+   WhatsApp
+   --------------------------------------------------------------------------- */
+
+/**
+ * Extrae un número de WhatsApp usable de los campos del proveedor.
+ *
+ * Los datos vienen escritos como los publica cada empresa: "322 850 4507",
+ * "+57 311 476 0547", o incluso varios en una misma celda separados por
+ * especialidad ("315 820 9120 general · 322 850 4507 Construcción"). Se toma
+ * el primero que parezca un celular colombiano.
+ */
+/**
+ * Celular colombiano: 10 dígitos que empiezan en 3, escritos con o sin
+ * separadores y con indicativo 57 opcional.
+ *
+ * Los límites (?<!\d) y (?!\d) son esenciales: sin ellos, un campo con varios
+ * fijos como "(605) 385 9144 · (605) 386 1097" produce un número inventado al
+ * unir dígitos de teléfonos distintos.
+ */
+const RE_CELULAR = /(?<!\d)(?:\+?57[\s.-]?)?(3\d{2})[\s.-]?(\d{3})[\s.-]?(\d{4})(?!\d)/;
+
+export function numeroWhatsApp(s: Supplier): string | null {
+  for (const campo of [s.whatsapp, s.fast_contact, s.phone]) {
+    if (!campo) continue;
+    if (/no (verificado|publicado|encontrado)/i.test(campo)) continue;
+
+    const m = campo.match(RE_CELULAR);
+    if (m) return "57" + m[1] + m[2] + m[3];
+  }
+  return null;
+}
+
+/** Enlace que abre WhatsApp con el mensaje ya escrito. */
+export function enlaceWhatsApp(s: Supplier, mensaje: string): string | null {
+  const num = numeroWhatsApp(s);
+  if (!num) return null;
+  return `https://wa.me/${num}?text=${encodeURIComponent(mensaje)}`;
+}
+
 export async function copiar(texto: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {

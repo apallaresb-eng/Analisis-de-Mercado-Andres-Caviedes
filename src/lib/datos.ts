@@ -414,6 +414,123 @@ export async function importarItems(
   return { insertados, duplicados: duplicados.length, codigosDuplicados: duplicados.slice(0, 20) };
 }
 
+/* ---------------------------------------------------------------------------
+   Importación masiva de proveedores y vínculos
+   --------------------------------------------------------------------------- */
+
+export interface ResultadoProveedores {
+  creados: number;
+  actualizados: number;
+}
+
+/**
+ * Inserta o actualiza proveedores comparando por nombre normalizado.
+ *
+ * Si el proveedor ya existe se ACTUALIZA en vez de duplicarse: al reimportar un
+ * estudio corregido, lo que se quiere es que los contactos malos se arreglen,
+ * no terminar con dos fichas de la misma empresa.
+ */
+export async function importarProveedores(
+  projectId: string,
+  filas: CamposProveedor[],
+  normalizar: (s: string) => string
+): Promise<ResultadoProveedores> {
+  const { data: existentes, error } = await supabase
+    .from("suppliers").select("id, name").eq("project_id", projectId);
+  if (error) throw new Error(traducir(error.message));
+
+  const porNombre = new Map<string, string>();
+  for (const e of (existentes ?? []) as { id: string; name: string }[]) {
+    porNombre.set(normalizar(e.name), e.id);
+  }
+
+  const nuevos: (CamposProveedor & { project_id: string })[] = [];
+  const cambios: { id: string; campos: CamposProveedor }[] = [];
+
+  for (const f of filas) {
+    const id = porNombre.get(normalizar(f.name));
+    if (id) cambios.push({ id, campos: f });
+    else nuevos.push({ ...f, project_id: projectId });
+  }
+
+  const LOTE = 500;
+  for (let i = 0; i < nuevos.length; i += LOTE) {
+    const { error: e } = await supabase.from("suppliers").insert(nuevos.slice(i, i + LOTE));
+    if (e) throw new Error(traducir(e.message));
+  }
+  // Las actualizaciones van una a una: PostgREST no permite un update masivo
+  // con valores distintos por fila.
+  for (const c of cambios) {
+    const { error: e } = await supabase.from("suppliers").update(c.campos).eq("id", c.id);
+    if (e) throw new Error(traducir(e.message));
+  }
+
+  return { creados: nuevos.length, actualizados: cambios.length };
+}
+
+export interface ResultadoVinculos {
+  creados: number;
+  yaExistian: number;
+  sinItem: string[];
+  sinProveedor: string[];
+}
+
+/** Crea los vínculos ítem ↔ proveedor resolviendo por código y nombre. */
+export async function importarVinculos(
+  projectId: string,
+  pares: { code: string; supplierId: string }[]
+): Promise<ResultadoVinculos> {
+  const { data: items, error: e1 } = await supabase
+    .from("items").select("id, code").eq("project_id", projectId);
+  if (e1) throw new Error(traducir(e1.message));
+
+  const porCodigo = new Map<string, string>();
+  for (const i of (items ?? []) as { id: string; code: string }[]) {
+    porCodigo.set(i.code.trim().toUpperCase(), i.id);
+  }
+
+  const ids = (items ?? []).map((i: { id: string }) => i.id);
+  const yaHay = new Set<string>();
+  const LOTE_Q = 200;
+  for (let i = 0; i < ids.length; i += LOTE_Q) {
+    const { data, error } = await supabase
+      .from("item_suppliers").select("item_id, supplier_id").in("item_id", ids.slice(i, i + LOTE_Q));
+    if (error) throw new Error(traducir(error.message));
+    for (const v of (data ?? []) as ItemSupplierRow[]) yaHay.add(`${v.item_id}|${v.supplier_id}`);
+  }
+
+  const nuevos: ItemSupplierRow[] = [];
+  const sinItem: string[] = [];
+  let yaExistian = 0;
+
+  for (const p of pares) {
+    const itemId = porCodigo.get(p.code.trim().toUpperCase());
+    if (!itemId) { if (!sinItem.includes(p.code)) sinItem.push(p.code); continue; }
+    const clave = `${itemId}|${p.supplierId}`;
+    if (yaHay.has(clave)) { yaExistian++; continue; }
+    yaHay.add(clave);
+    nuevos.push({ item_id: itemId, supplier_id: p.supplierId });
+  }
+
+  const LOTE = 500;
+  for (let i = 0; i < nuevos.length; i += LOTE) {
+    const { error } = await supabase.from("item_suppliers").insert(nuevos.slice(i, i + LOTE));
+    if (error) throw new Error(traducir(error.message));
+  }
+
+  return { creados: nuevos.length, yaExistian, sinItem: sinItem.slice(0, 20), sinProveedor: [] };
+}
+
+/** Proveedores de la obra, para resolver nombres al vincular. */
+export async function listarProveedoresBasico(
+  projectId: string
+): Promise<{ id: string; name: string }[]> {
+  const { data, error } = await supabase
+    .from("suppliers").select("id, name").eq("project_id", projectId);
+  if (error) throw new Error(traducir(error.message));
+  return (data ?? []) as { id: string; name: string }[];
+}
+
 export async function registrarImportacion(reg: {
   project_id: string;
   filename: string;

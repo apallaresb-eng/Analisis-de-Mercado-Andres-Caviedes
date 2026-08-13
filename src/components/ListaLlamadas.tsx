@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { Item, Project, Supplier } from "../lib/types";
 import type { VinculosItemProveedor } from "../lib/datos";
 import { actualizarEstadoVarios } from "../lib/datos";
-import { contactoRapido, copiar, mensajeProveedor } from "../lib/dominio";
+import { contactoRapido, copiar, enlaceWhatsApp, mensajeProveedor } from "../lib/dominio";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -106,8 +106,22 @@ export default function ListaLlamadas({
               </div>
 
               <div className="btns" style={{ marginTop: "auto" }}>
+                {/* Abre WhatsApp con el mensaje ya escrito: evita copiar, cambiar
+                    de aplicación, buscar el contacto y pegar. */}
+                {enlaceWhatsApp(proveedor, mensajeProveedor(lista, ctx)) && (
+                  <a
+                    className="btn"
+                    href={enlaceWhatsApp(proveedor, mensajeProveedor(lista, ctx))!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ textDecoration: "none" }}
+                    onClick={() => void marcarContactados(lista)}
+                  >
+                    Enviar por WhatsApp ({lista.length})
+                  </a>
+                )}
                 <button
-                  className="btn"
+                  className="btn ghost"
                   onClick={async () => {
                     const ok = await copiar(mensajeProveedor(lista, ctx));
                     ok

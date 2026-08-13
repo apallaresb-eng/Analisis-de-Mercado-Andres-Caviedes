@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Item, ItemQuoteStats, Project, Quote, Supplier } from "../lib/types";
 import {
-  ESTADOS, alertaDe, cop, contactoRapido, copiar, mensajeItem,
+  ESTADOS, alertaDe, cop, contactoRapido, copiar, enlaceWhatsApp, mensajeItem,
 } from "../lib/dominio";
 import {
   actualizarItem, borrarCotizacion, cargarCotizaciones, crearCotizacion,
@@ -33,6 +33,12 @@ export default function DetalleItem({
   const { avisar, avisarError } = useToast();
   const { session, isAdmin } = useAuth();
   const a = alertaDe(item);
+
+  const ctxProyecto = {
+    nombre: proyecto.name,
+    contrato: proyecto.contract_no,
+    municipio: proyecto.municipality,
+  };
 
   const [nota, setNota] = useState(item.note ?? "");
   const [cantidad, setCantidad] = useState(item.quantity?.toString() ?? "");
@@ -340,14 +346,33 @@ export default function DetalleItem({
               <span>{contactoRapido(p)}</span>
             </div>
             <div className="links">
+              {/* Un clic abre WhatsApp con la solicitud de cotización ya escrita
+                  para ESTE ítem: sin copiar, cambiar de app ni buscar el contacto. */}
+              {enlaceWhatsApp(p, mensajeItem(item, ctxProyecto)) && (
+                <a
+                  className="mini"
+                  href={enlaceWhatsApp(p, mensajeItem(item, ctxProyecto))!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ borderColor: "var(--ok-line)", color: "var(--ok)", fontWeight: 700 }}
+                  onClick={() => void cambiarEstado("contactado")}
+                >
+                  Cotizar por WhatsApp
+                </a>
+              )}
               {p.web?.startsWith("http") && (
                 <a className="mini" href={p.web} target="_blank" rel="noopener noreferrer">
                   Sitio web
                 </a>
               )}
               {p.email?.includes("@") && (
-                <a className="mini" href={`mailto:${p.email}`}>
-                  {p.email}
+                <a
+                  className="mini"
+                  href={`mailto:${p.email}?subject=${encodeURIComponent(
+                    `Solicitud de cotización — ${item.code} ${item.description.slice(0, 60)}`
+                  )}&body=${encodeURIComponent(mensajeItem(item, ctxProyecto))}`}
+                >
+                  Cotizar por correo
                 </a>
               )}
             </div>
@@ -377,23 +402,13 @@ export default function DetalleItem({
         <textarea
           className="msg"
           readOnly
-          value={mensajeItem(item, {
-            nombre: proyecto.name,
-            contrato: proyecto.contract_no,
-            municipio: proyecto.municipality,
-          })}
+          value={mensajeItem(item, ctxProyecto)}
         />
         <div className="btns">
           <button
             className="btn"
             onClick={async () => {
-              const ok = await copiar(
-                mensajeItem(item, {
-                  nombre: proyecto.name,
-                  contrato: proyecto.contract_no,
-                  municipio: proyecto.municipality,
-                })
-              );
+              const ok = await copiar(mensajeItem(item, ctxProyecto));
               ok ? avisar("Mensaje copiado") : avisarError(new Error("No se pudo copiar. Seleccione el texto manualmente."));
             }}
           >
