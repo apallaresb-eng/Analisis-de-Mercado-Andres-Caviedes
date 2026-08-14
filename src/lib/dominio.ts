@@ -1,4 +1,4 @@
-import type { Item, ItemState, Supplier } from "./types";
+import type { Item, ItemState, QuoteRequest, RequestStatus, Supplier } from "./types";
 
 /* ---------------------------------------------------------------------------
    Estados de gestión
@@ -21,6 +21,56 @@ export const ESTADOS: EstadoDef[] = [
 export const ESTADO_POR_ID: Record<ItemState, EstadoDef> = Object.fromEntries(
   ESTADOS.map((e) => [e.id, e])
 ) as Record<ItemState, EstadoDef>;
+
+/* ---------------------------------------------------------------------------
+   Estados de una solicitud de cotización
+
+   No hay un "esperando cotización" separado de "enviada": se está esperando
+   desde el instante en que se manda el mensaje, así que sería un clic más sin
+   información nueva. Y "requiere seguimiento" no es un estado guardado sino un
+   cálculo sobre sent_at (ver `requiereSeguimiento`), para que no envejezca.
+   --------------------------------------------------------------------------- */
+export interface EstadoSolicitudDef {
+  id: RequestStatus;
+  lbl: string;
+  color: string;
+  linea: string;
+  fondo: string;
+  desc: string;
+}
+
+export const ESTADOS_SOLICITUD: EstadoSolicitudDef[] = [
+  { id: "borrador",      lbl: "Borrador",      color: "var(--faint)",  linea: "var(--line)",      fondo: "var(--surface-2)", desc: "Armada, sin enviar" },
+  { id: "enviada",       lbl: "Enviada",       color: "var(--warn)",   linea: "var(--warn-line)", fondo: "var(--warn-soft)", desc: "Esperando respuesta" },
+  { id: "respondida",    lbl: "Respondida",    color: "var(--accent)", linea: "var(--accent-line)", fondo: "var(--accent-soft)", desc: "El proveedor contestó" },
+  { id: "cerrada",       lbl: "Cerrada",       color: "var(--ok)",     linea: "var(--ok-line)",   fondo: "var(--ok-soft)",   desc: "Cotización cargada y revisada" },
+  { id: "sin_respuesta", lbl: "Sin respuesta", color: "var(--crit)",   linea: "var(--crit-line)", fondo: "var(--crit-soft)", desc: "No contestó" },
+  { id: "descartada",    lbl: "Descartada",    color: "var(--faint)",  linea: "var(--line)",      fondo: "var(--surface-2)", desc: "No maneja esta categoría" },
+];
+
+export const ESTADO_SOLICITUD_POR_ID: Record<RequestStatus, EstadoSolicitudDef> =
+  Object.fromEntries(ESTADOS_SOLICITUD.map((e) => [e.id, e])) as Record<
+    RequestStatus, EstadoSolicitudDef
+  >;
+
+/** Días transcurridos desde una fecha ISO. Null si no hay fecha. */
+export function diasDesde(iso: string | null): number | null {
+  if (!iso) return null;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+}
+
+/** A partir de cuántos días sin respuesta conviene volver a insistir. */
+export const DIAS_SEGUIMIENTO = 4;
+
+/**
+ * Se calcula, no se guarda: un campo "requiere seguimiento" almacenado queda
+ * desactualizado en cuanto pasa un día y nadie abre la aplicación.
+ */
+export function requiereSeguimiento(s: QuoteRequest): boolean {
+  if (s.status !== "enviada") return false;
+  const d = diasDesde(s.sent_at);
+  return d !== null && d >= DIAS_SEGUIMIENTO;
+}
 
 /* ---------------------------------------------------------------------------
    Alertas del estudio de mercado
@@ -142,6 +192,80 @@ export function mensajeProveedor(items: Item[], p: CtxProyecto): string {
 }
 
 /* ---------------------------------------------------------------------------
+   Mensaje de solicitud por categoría
+
+   El mensaje largo (cabecera institucional + diez puntos numerados) es correcto
+   para un correo formal y pésimo para WhatsApp: llega como un muro de texto y
+   no lo contesta nadie. Este es el corto, que es el que se envía.
+
+   El nombre de la categoría va en el encabezado a propósito: es lo que después
+   permite archivar y sustentar la respuesta ("la cotización de PVC de Durman")
+   en vez de recibir un PDF con trescientos materiales revueltos.
+   --------------------------------------------------------------------------- */
+
+/**
+ * Tope de ítems que caben en un enlace de wa.me.
+ *
+ * El texto viaja en la URL codificado, y por encima de unos 2.000 caracteres
+ * WhatsApp la corta o no abre. Con descripciones de obra eso son ~25 ítems.
+ */
+export const MAX_ITEMS_WHATSAPP = 25;
+
+export function mensajeSolicitud(
+  items: Item[],
+  p: CtxProyecto,
+  categoria: string | null,
+  limite: number = MAX_ITEMS_WHATSAPP
+): string {
+  const visibles = items.slice(0, limite);
+  const restantes = items.length - visibles.length;
+  const deQue = categoria ? ` de ${categoria}` : "";
+  const lugar = p.municipio ? `, obra en ${p.municipio} (Bolívar)` : "";
+
+  let s = `Buen día. Consorcio AMG – CPI${lugar}.\n\n`;
+  s += `Necesitamos cotizar ${items.length} ítem(s)${deQue}:\n\n`;
+
+  for (const [i, it] of visibles.entries()) {
+    const cant = it.quantity !== null ? ` — ${it.quantity} ${it.unit ?? ""}`.trimEnd() : "";
+    s += `${i + 1}) ${it.description}${cant}\n`;
+  }
+
+  if (restantes > 0) {
+    s += `\n…y ${restantes} ítem(s) más — le envío la lista completa enseguida.\n`;
+  }
+
+  // Libro1 no trae cantidades. Repetir "por confirmar" en cada línea alarga el
+  // mensaje sin aportar nada; una sola línea al final dice lo mismo.
+  if (items.every((it) => it.quantity === null)) {
+    s += `\nLas cantidades se confirman al adjudicar.\n`;
+  }
+
+  s += `\n¿Nos pueden cotizar? Precio unitario, IVA, disponibilidad y tiempo de entrega.\nGracias.`;
+  return s;
+}
+
+/**
+ * Lista completa con códigos, para pegar como segundo mensaje o mandar por
+ * correo. Aquí sí van los códigos: son los que permiten casar la respuesta del
+ * proveedor con los ítems del estudio.
+ */
+export function listaCompletaSolicitud(items: Item[], categoria: string | null): string {
+  let s = categoria ? `Lista completa — ${categoria} (${items.length} ítems)\n\n`
+                    : `Lista completa (${items.length} ítems)\n\n`;
+  for (const [i, it] of items.entries()) {
+    const cant = it.quantity !== null ? ` — ${it.quantity} ${it.unit ?? ""}`.trimEnd() : "";
+    s += `${i + 1}) [${it.code}] ${it.description}${cant}\n`;
+    if (it.spec) s += `    ${it.spec}\n`;
+  }
+  return s;
+}
+
+/** Asunto para el correo de una solicitud. */
+export function asuntoSolicitud(codigo: string, categoria: string | null): string {
+  return `Solicitud de cotización ${codigo}${categoria ? ` — ${categoria}` : ""} · Consorcio AMG – CPI`;
+}
+
+/* ---------------------------------------------------------------------------
    Utilidades
    --------------------------------------------------------------------------- */
 export function contactoRapido(s: Supplier): string {
@@ -181,11 +305,25 @@ export function numeroWhatsApp(s: Supplier): string | null {
   return null;
 }
 
-/** Enlace que abre WhatsApp con el mensaje ya escrito. */
+/**
+ * Enlace que abre WhatsApp con el mensaje ya escrito.
+ *
+ * No recorta el mensaje: recortar por la mitad produciría una solicitud
+ * incompleta enviada sin que nadie se entere. Quien arma el mensaje es
+ * responsable de su longitud (ver MAX_ITEMS_WHATSAPP), y la interfaz avisa con
+ * `enlaceDemasiadoLargo` antes de dejar enviar.
+ */
 export function enlaceWhatsApp(s: Supplier, mensaje: string): string | null {
   const num = numeroWhatsApp(s);
   if (!num) return null;
   return `https://wa.me/${num}?text=${encodeURIComponent(mensaje)}`;
+}
+
+/** Longitud a partir de la cual WhatsApp empieza a cortar o no abre el enlace. */
+const LIMITE_URL = 2000;
+
+export function enlaceDemasiadoLargo(mensaje: string): boolean {
+  return encodeURIComponent(mensaje).length > LIMITE_URL;
 }
 
 export async function copiar(texto: string): Promise<boolean> {

@@ -220,3 +220,60 @@ select.sel { padding: 7px 10px; border: 1px solid var(--line); border-radius: 7p
 .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.is-error { background: var(--crit); color: #fff; }
 .empty { padding: 40px 20px; text-align: center; color: var(--faint); font-size: 13.5px; }
+
+/* --- Centro de cotizaciones -------------------------------------------------
+   La matriz categoría × proveedor NO se dibuja como tabla de verdad: con ~140
+   proveedores serían 140 columnas y no cabría en ninguna pantalla. Se dibuja
+   como una fila por categoría con sus propios proveedores al lado, que suelen
+   ser 8-10. Misma información, y sí cabe.                                    */
+.cats { display: flex; flex-direction: column; gap: 9px; }
+
+.catrow { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--stripe, var(--line)); border-radius: var(--r); padding: 13px 15px; }
+.catrow.is-hueco { border-color: var(--crit-line); background: var(--crit-soft); }
+.catrow .ch { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.catrow .ch h3 { font-size: 14.5px; }
+.catrow .ch .cn { font-size: 11.5px; color: var(--faint); font-weight: 600; }
+
+/* Barra de cobertura demostrada de la categoría. */
+.cbar { height: 6px; border-radius: 99px; background: var(--sunk); overflow: hidden; margin: 9px 0 10px; }
+.cbar i { display: block; height: 100%; background: var(--accent); transition: width .35s ease; }
+
+/* Cada celda es un par (categoría, proveedor): una solicitud, o el hueco donde
+   crearla. */
+.cells { display: flex; flex-wrap: wrap; gap: 6px; }
+.cell { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--cl, var(--line)); background: var(--cb, var(--surface-2)); color: var(--ink-2); font-size: 12.5px; font-weight: 600; text-align: left; }
+.cell:hover { border-color: var(--accent); }
+.cell .cd { width: 7px; height: 7px; border-radius: 99px; background: var(--cc, var(--faint)); flex: 0 0 auto; }
+.cell .cx { font-size: 10.5px; color: var(--faint); font-weight: 700; }
+.cell.is-nueva { border-style: dashed; color: var(--muted); }
+.cell.is-alerta { border-color: var(--crit-line); }
+
+/* Pipeline: una columna por estado. */
+.pipe { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; align-items: start; }
+.pipecol { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: var(--r); padding: 11px; }
+.pipecol > .lbl { display: flex; justify-content: space-between; margin-bottom: 9px; }
+.pipecol .stack { display: flex; flex-direction: column; gap: 7px; }
+.scard { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--stripe, var(--line)); border-radius: 8px; padding: 10px 11px; width: 100%; text-align: left; }
+.scard:hover { border-color: var(--accent-line); }
+.scard .sn { font-size: 13px; font-weight: 700; line-height: 1.25; }
+.scard .sm { font-size: 11.5px; color: var(--faint); margin-top: 3px; }
+.scard.is-tarde { border-color: var(--crit-line); background: var(--crit-soft); }
+
+/* Ranking de cobertura. */
+.rank { display: flex; flex-direction: column; gap: 5px; }
+.rankrow { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 7px 10px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--surface); font-size: 12.5px; }
+.rankrow .rn { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rankrow .rv { font-weight: 700; font-size: 13px; }
+
+/* Panel lateral de la solicitud. Reutiliza el patrón sticky de .detail. */
+.reqpanel { position: sticky; top: 74px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; max-height: calc(100vh - 100px); overflow-y: auto; }
+.reqpanel .msg { width: 100%; min-height: 190px; font-size: 12.5px; line-height: 1.5; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); color: var(--ink); font-family: inherit; resize: vertical; }
+.reqitems { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
+.reqitem { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 12px; padding: 5px 8px; border-radius: 6px; background: var(--surface-2); }
+.reqitem .rc { font-size: 10.5px; font-weight: 700; color: var(--faint); }
+
+/* Revisión de categorías propuestas por el clasificador. */
+.revlist { display: flex; flex-direction: column; gap: 4px; max-height: calc(100vh - 330px); overflow-y: auto; }
+.revrow { display: grid; grid-template-columns: auto auto 1fr auto; gap: 9px; align-items: center; padding: 7px 10px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--surface); font-size: 12.5px; text-align: left; width: 100%; }
+.revrow[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.revrow .rd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

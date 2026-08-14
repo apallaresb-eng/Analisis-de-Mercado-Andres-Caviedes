@@ -1,6 +1,8 @@
 import { supabase } from "./supabase";
 import type {
-  Item, ItemQuoteStats, ItemState, ItemSupplierRow, Project, Quote, Supplier,
+  Category, ContactConfidence, Item, ItemQuoteStats, ItemState, ItemSupplierRow,
+  Project, Quote, QuoteRequest, QuoteRequestItem, RequestChannel, RequestScope,
+  RequestStatus, Supplier, SupplierCategory,
 } from "./types";
 
 /** Los proveedores asignados a cada ítem, en forma de mapa. */
@@ -10,8 +12,35 @@ export interface DatosProyecto {
   proyecto: Project;
   items: Item[];
   proveedores: Supplier[];
+  /** Vínculo manual ítem ↔ proveedor. Hoy es la excepción, no la regla. */
   vinculos: VinculosItemProveedor;
   stats: Record<string, ItemQuoteStats>;
+  categorias: Category[];
+  /** category_id → supplier_id[]. La llave que reemplaza el vínculo por ítem. */
+  coberturas: Record<string, string[]>;
+  solicitudes: QuoteRequest[];
+  /** request_id → item_id[]. */
+  lineas: Record<string, string[]>;
+}
+
+/**
+ * PostgREST manda los filtros en la URL, y una lista de mil ids no cabe.
+ * Con 1.071 ítems cualquier `.in("item_id", todos)` falla con 414 antes de
+ * llegar a la base.
+ */
+const LOTE_IDS = 200;
+
+async function porLotes<T>(
+  ids: string[],
+  consulta: (lote: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>
+): Promise<T[]> {
+  const salida: T[] = [];
+  for (let i = 0; i < ids.length; i += LOTE_IDS) {
+    const { data, error } = await consulta(ids.slice(i, i + LOTE_IDS));
+    if (error) throw new Error(traducir(error.message));
+    salida.push(...((data ?? []) as T[]));
+  }
+  return salida;
 }
 
 export async function listarProyectos(): Promise<Project[]> {
@@ -25,33 +54,56 @@ export async function listarProyectos(): Promise<Project[]> {
 }
 
 export async function cargarProyecto(projectId: string): Promise<DatosProyecto> {
-  const [proyRes, itemsRes, provRes, statsRes] = await Promise.all([
+  const [proyRes, itemsRes, provRes, statsRes, catRes, solRes] = await Promise.all([
     supabase.from("projects").select("*").eq("id", projectId).single(),
     supabase.from("items").select("*").eq("project_id", projectId).order("seq", { ascending: true }),
     supabase.from("suppliers").select("*").eq("project_id", projectId).order("name"),
     supabase.from("item_quote_stats").select("*").eq("project_id", projectId),
+    supabase.from("categories").select("*").eq("project_id", projectId).order("sort"),
+    supabase.from("quote_requests").select("*").eq("project_id", projectId)
+      .order("created_at", { ascending: false }),
   ]);
 
-  for (const r of [proyRes, itemsRes, provRes, statsRes]) {
+  for (const r of [proyRes, itemsRes, provRes, statsRes, catRes, solRes]) {
     if (r.error) throw new Error(traducir(r.error.message));
   }
   if (!proyRes.data) throw new Error("El proyecto no existe o no tiene permiso para verlo.");
 
   const items = (itemsRes.data ?? []) as Item[];
+  const proveedores = (provRes.data ?? []) as Supplier[];
+  const solicitudes = (solRes.data ?? []) as QuoteRequest[];
 
-  // item_suppliers no se puede filtrar por project_id directamente:
-  // se filtra por los ids de los ítems del proyecto.
+  // item_suppliers no se puede filtrar por project_id directamente: se filtra
+  // por los ids de los ítems, y eso hay que pedirlo por lotes.
   const vinculos: VinculosItemProveedor = {};
   if (items.length) {
-    const ids = items.map((i) => i.id);
-    const { data: vin, error: errVin } = await supabase
-      .from("item_suppliers")
-      .select("item_id, supplier_id")
-      .in("item_id", ids);
-    if (errVin) throw new Error(traducir(errVin.message));
-    for (const v of (vin ?? []) as ItemSupplierRow[]) {
-      (vinculos[v.item_id] ??= []).push(v.supplier_id);
-    }
+    const filas = await porLotes<ItemSupplierRow>(
+      items.map((i) => i.id),
+      (lote) => supabase.from("item_suppliers").select("item_id, supplier_id").in("item_id", lote)
+    );
+    for (const v of filas) (vinculos[v.item_id] ??= []).push(v.supplier_id);
+  }
+
+  // supplier_categories tampoco tiene project_id: se filtra por los proveedores
+  // de la obra.
+  const coberturas: Record<string, string[]> = {};
+  if (proveedores.length) {
+    const filas = await porLotes<SupplierCategory>(
+      proveedores.map((p) => p.id),
+      (lote) => supabase.from("supplier_categories")
+        .select("supplier_id, category_id, strength, created_at").in("supplier_id", lote)
+    );
+    for (const c of filas) (coberturas[c.category_id] ??= []).push(c.supplier_id);
+  }
+
+  const lineas: Record<string, string[]> = {};
+  if (solicitudes.length) {
+    const filas = await porLotes<QuoteRequestItem>(
+      solicitudes.map((s) => s.id),
+      (lote) => supabase.from("quote_request_items")
+        .select("request_id, item_id, quantity_snapshot").in("request_id", lote)
+    );
+    for (const l of filas) (lineas[l.request_id] ??= []).push(l.item_id);
   }
 
   const stats: Record<string, ItemQuoteStats> = {};
@@ -60,31 +112,27 @@ export async function cargarProyecto(projectId: string): Promise<DatosProyecto> 
   return {
     proyecto: proyRes.data as Project,
     items,
-    proveedores: (provRes.data ?? []) as Supplier[],
+    proveedores,
     vinculos,
     stats,
+    categorias: (catRes.data ?? []) as Category[],
+    coberturas,
+    solicitudes,
+    lineas,
   };
 }
 
-/** Todas las cotizaciones de la obra. Se usa al exportar. */
+/**
+ * Todas las cotizaciones de la obra. Se usa al exportar.
+ *
+ * Desde 0004 la tabla tiene project_id (lo llena un trigger), así que ya no hay
+ * que traer los mil ids de ítems para preguntar por lotes.
+ */
 export async function cargarCotizacionesDeProyecto(projectId: string): Promise<Quote[]> {
-  const { data: items, error: e1 } = await supabase
-    .from("items").select("id").eq("project_id", projectId);
-  if (e1) throw new Error(traducir(e1.message));
-
-  const ids = (items ?? []).map((i: { id: string }) => i.id);
-  if (!ids.length) return [];
-
-  // Se pide por lotes: una lista de mil ids no cabe en la URL de la consulta.
-  const LOTE = 200;
-  const todas: Quote[] = [];
-  for (let i = 0; i < ids.length; i += LOTE) {
-    const { data, error } = await supabase
-      .from("quotes").select("*").in("item_id", ids.slice(i, i + LOTE));
-    if (error) throw new Error(traducir(error.message));
-    todas.push(...((data ?? []) as Quote[]));
-  }
-  return todas;
+  const { data, error } = await supabase
+    .from("quotes").select("*").eq("project_id", projectId);
+  if (error) throw new Error(traducir(error.message));
+  return (data ?? []) as Quote[];
 }
 
 export async function cargarCotizaciones(itemId: string): Promise<Quote[]> {
@@ -129,6 +177,7 @@ export interface CamposItem {
   unit?: string | null;
   quantity?: number | null;
   category?: string | null;
+  category_id?: string | null;
   spec?: string | null;
   iva_treatment?: string | null;
   observation?: string | null;
@@ -192,6 +241,14 @@ export interface CamposProveedor {
   fast_contact?: string | null;
   contact_source?: string | null;
   notes?: string | null;
+  contact_confidence?: ContactConfidence | null;
+  contact_verified_at?: string | null;
+  national?: boolean;
+}
+
+/** Deja constancia de que alguien logró comunicarse de verdad con el proveedor. */
+export async function marcarContactoVerificado(supplierId: string): Promise<Supplier> {
+  return editarProveedor(supplierId, { contact_verified_at: new Date().toISOString() });
 }
 
 export async function crearProveedor(
@@ -244,16 +301,278 @@ export async function desvincularProveedor(itemId: string, supplierId: string): 
   exigirFilas(data, "quitar el proveedor del ítem");
 }
 
-/** Marca varios ítems a la vez (usado por la lista de llamadas). */
+/**
+ * Marca varios ítems a la vez.
+ *
+ * OJO: el estado del ítem NO debe usarse para decidir si un proveedor sigue
+ * visible. Eso fue exactamente el error anterior: contactar a un proveedor
+ * marcaba sus ítems como gestionados, y esos mismos ítems desaparecían de los
+ * otros tres proveedores que también los surtían. La visibilidad la manda el
+ * estado de la SOLICITUD (quote_requests.status).
+ */
 export async function actualizarEstadoVarios(ids: string[], state: ItemState): Promise<void> {
   if (!ids.length) return;
-  const { error } = await supabase.from("items").update({ state }).in("id", ids);
+  const { data, error } = await supabase
+    .from("items").update({ state }).in("id", ids).select("id");
   if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "actualizar el estado de los ítems");
+}
+
+/* ---------------------------------------------------------------------------
+   Categorías (solo administrador — RLS lo exige en la base)
+   --------------------------------------------------------------------------- */
+
+export interface CamposCategoria {
+  name: string;
+  slug: string;
+  parent_id?: string | null;
+  sort?: number;
+}
+
+export async function crearCategoria(
+  projectId: string,
+  campos: CamposCategoria
+): Promise<Category> {
+  const { data, error } = await supabase
+    .from("categories")
+    .insert({ ...campos, project_id: projectId })
+    .select()
+    .single();
+  if (error) throw new Error(traducir(error.message));
+  return data as Category;
+}
+
+export async function editarCategoria(
+  id: string,
+  campos: Partial<CamposCategoria>
+): Promise<Category> {
+  const { data, error } = await supabase
+    .from("categories").update(campos).eq("id", id).select().single();
+  if (error) throw new Error(traducir(error.message));
+  return data as Category;
+}
+
+export async function borrarCategoria(id: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("categories").delete().eq("id", id).select("id");
+  if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "borrar la categoría");
+}
+
+/**
+ * Asigna categoría a varios ítems de una vez.
+ *
+ * Es la operación central de la pantalla de revisión: el clasificador propone
+ * y la persona confirma por bloques, no ítem por ítem.
+ *
+ * Se escribe también `category` (texto) para no romper el filtro del tablero
+ * ni la hoja de export, que todavía leen la columna vieja.
+ */
+export async function asignarCategoriaVarios(
+  itemIds: string[],
+  categoryId: string | null,
+  nombreCategoria: string | null
+): Promise<void> {
+  if (!itemIds.length) return;
+  for (let i = 0; i < itemIds.length; i += LOTE_IDS) {
+    const { data, error } = await supabase
+      .from("items")
+      .update({ category_id: categoryId, category: nombreCategoria })
+      .in("id", itemIds.slice(i, i + LOTE_IDS))
+      .select("id");
+    if (error) throw new Error(traducir(error.message));
+    exigirFilas(data, "asignar la categoría");
+  }
+}
+
+/* --- Qué categorías atiende cada proveedor --------------------------------- */
+
+export async function vincularProveedorCategoria(
+  supplierId: string,
+  categoryId: string,
+  strength = 2
+): Promise<void> {
+  const { error } = await supabase
+    .from("supplier_categories")
+    .insert({ supplier_id: supplierId, category_id: categoryId, strength });
+  if (error && !error.message.toLowerCase().includes("duplicate")) {
+    throw new Error(traducir(error.message));
+  }
+}
+
+export async function desvincularProveedorCategoria(
+  supplierId: string,
+  categoryId: string
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("supplier_categories").delete()
+    .eq("supplier_id", supplierId).eq("category_id", categoryId)
+    .select("supplier_id");
+  if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "quitar la categoría del proveedor");
+}
+
+/** Reemplaza de una vez todas las categorías que atiende un proveedor. */
+export async function fijarCategoriasProveedor(
+  supplierId: string,
+  categoryIds: string[]
+): Promise<void> {
+  const { error: eDel } = await supabase
+    .from("supplier_categories").delete().eq("supplier_id", supplierId);
+  if (eDel) throw new Error(traducir(eDel.message));
+
+  if (!categoryIds.length) return;
+  const { error } = await supabase.from("supplier_categories").insert(
+    categoryIds.map((category_id) => ({ supplier_id: supplierId, category_id, strength: 2 }))
+  );
+  if (error) throw new Error(traducir(error.message));
+}
+
+/* ---------------------------------------------------------------------------
+   Solicitudes de cotización
+
+   Una solicitud es la unidad de trabajo real: "el PVC que le pedí a Durman".
+   Tiene código propio, estado propio e historial propio, y por eso enviarla no
+   afecta a ninguna otra.
+   --------------------------------------------------------------------------- */
+
+export interface NuevaSolicitud {
+  project_id: string;
+  supplier_id: string;
+  category_id: string | null;
+  scope: RequestScope;
+  code: string;
+  message_text?: string | null;
+  whatsapp_url?: string | null;
+  notes?: string | null;
+}
+
+/**
+ * Crea la solicitud y sus líneas en dos pasos.
+ *
+ * Si la inserción de líneas falla, se borra la solicitud: media solicitud sin
+ * ítems no sirve para nada y ensuciaría la matriz.
+ */
+export async function crearSolicitud(
+  s: NuevaSolicitud,
+  itemIds: string[],
+  cantidades: Record<string, number | null>,
+  userId: string
+): Promise<QuoteRequest> {
+  const { data, error } = await supabase
+    .from("quote_requests")
+    .insert({ ...s, created_by: userId })
+    .select()
+    .single();
+  if (error) throw new Error(traducir(error.message));
+  const solicitud = data as QuoteRequest;
+
+  if (itemIds.length) {
+    const filas = itemIds.map((item_id) => ({
+      request_id: solicitud.id,
+      item_id,
+      quantity_snapshot: cantidades[item_id] ?? null,
+    }));
+    const { error: eL } = await supabase.from("quote_request_items").insert(filas);
+    if (eL) {
+      await supabase.from("quote_requests").delete().eq("id", solicitud.id);
+      throw new Error(traducir(eL.message));
+    }
+  }
+  return solicitud;
+}
+
+export interface CambioSolicitud {
+  status?: RequestStatus;
+  channel?: RequestChannel | null;
+  message_text?: string | null;
+  whatsapp_url?: string | null;
+  sent_at?: string | null;
+  responded_at?: string | null;
+  notes?: string | null;
+}
+
+export async function actualizarSolicitud(
+  id: string,
+  cambio: CambioSolicitud
+): Promise<QuoteRequest> {
+  const { data, error } = await supabase
+    .from("quote_requests").update(cambio).eq("id", id).select().single();
+  if (error) throw new Error(traducir(error.message));
+  return data as QuoteRequest;
+}
+
+/**
+ * Marca la solicitud como enviada.
+ *
+ * Se llama DESPUÉS de que la persona confirma que sí mandó el mensaje, no al
+ * pulsar el enlace: abrir WhatsApp y cerrarlo sin enviar no es haber contactado
+ * a nadie, y antes eso quedaba registrado como si sí.
+ */
+export async function marcarSolicitudEnviada(
+  id: string,
+  channel: RequestChannel
+): Promise<QuoteRequest> {
+  const ahora = new Date().toISOString();
+  return actualizarSolicitud(id, { status: "enviada", channel, sent_at: ahora });
+}
+
+/** Registra que el proveedor respondió. Idempotente: no pisa la primera fecha. */
+export async function marcarSolicitudRespondida(s: QuoteRequest): Promise<QuoteRequest> {
+  return actualizarSolicitud(s.id, {
+    status: "respondida",
+    responded_at: s.responded_at ?? new Date().toISOString(),
+  });
+}
+
+export async function borrarSolicitud(id: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("quote_requests").delete().eq("id", id).select("id");
+  if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "borrar la solicitud");
+}
+
+export async function quitarItemDeSolicitud(
+  requestId: string,
+  itemId: string
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("quote_request_items").delete()
+    .eq("request_id", requestId).eq("item_id", itemId)
+    .select("item_id");
+  if (error) throw new Error(traducir(error.message));
+  exigirFilas(data, "quitar el ítem de la solicitud");
+}
+
+/**
+ * Siguiente número libre para el código legible de la solicitud.
+ *
+ * El código (PVC-DURMAN-001) es lo que se cita en un correo o en una carpeta de
+ * sustentación, así que tiene que ser corto, estable y no repetirse dentro de
+ * la obra.
+ */
+export function siguienteCodigoSolicitud(
+  existentes: QuoteRequest[],
+  slugCategoria: string,
+  nombreProveedor: string
+): string {
+  const prov = nombreProveedor
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) || "PROV";
+  const prefijo = `${slugCategoria}-${prov}`;
+  let n = 0;
+  for (const s of existentes) {
+    const m = s.code.match(new RegExp(`^${prefijo}-(\\d+)$`));
+    if (m) n = Math.max(n, parseInt(m[1], 10));
+  }
+  return `${prefijo}-${String(n + 1).padStart(3, "0")}`;
 }
 
 export interface NuevaCotizacion {
   item_id: string;
   supplier_id: string | null;
+  /** De qué solicitud salió. Es lo que permite sustentar la cotización después. */
+  request_id?: string | null;
   price_no_iva?: number | null;
   iva_amount?: number | null;
   price_with_iva?: number | null;
@@ -360,6 +679,7 @@ export interface ItemImportado {
   unit?: string | null;
   quantity?: number | null;
   category?: string | null;
+  category_id?: string | null;
   spec?: string | null;
 }
 
@@ -396,6 +716,11 @@ export async function importarItems(
   const LOTE = 500;
   let insertados = 0;
   for (let i = 0; i < nuevos.length; i += LOTE) {
+    // category_id NO va aquí: el importador nunca lo conoce (Libro1 no trae
+    // categoría), se asigna después en el paso de clasificación. Mandarlo en
+    // null de todas formas es peso muerto en el payload, y si la caché de
+    // esquema de PostgREST aún no ha visto la columna nueva (recién creada por
+    // 0004), el insert entero se rechaza con 400 en vez de simplemente omitirlo.
     const lote = nuevos.slice(i, i + LOTE).map((f, j) => ({
       project_id: projectId,
       seq: seqInicial + i + j,

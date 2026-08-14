@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from "react";
-import type { Supplier } from "../lib/types";
-import { borrarProveedor, crearProveedor, editarProveedor, type CamposProveedor } from "../lib/datos";
+import type { Category, ContactConfidence, Supplier } from "../lib/types";
+import {
+  borrarProveedor, crearProveedor, editarProveedor, fijarCategoriasProveedor,
+  type CamposProveedor,
+} from "../lib/datos";
 import { useToast } from "./Toast";
 import { useAuth } from "../lib/auth";
 
@@ -8,13 +11,18 @@ interface Props {
   proyectoId: string;
   /** Si viene, se edita; si no, se crea uno nuevo. */
   proveedor?: Supplier;
+  /** Taxonomía de la obra, para declarar qué atiende el proveedor. */
+  categorias?: Category[];
+  /** Categorías que ya tiene asignadas. */
+  categoriasActuales?: string[];
   onCerrar: () => void;
   onGuardado: (s: Supplier) => void | Promise<void>;
   onBorrado?: () => void | Promise<void>;
 }
 
 export default function EditorProveedor({
-  proyectoId, proveedor, onCerrar, onGuardado, onBorrado,
+  proyectoId, proveedor, categorias = [], categoriasActuales = [],
+  onCerrar, onGuardado, onBorrado,
 }: Props) {
   const { avisar, avisarError } = useToast();
   const { isAdmin } = useAuth();
@@ -31,9 +39,14 @@ export default function EditorProveedor({
     fast_contact: proveedor?.fast_contact ?? "",
     contact_source: proveedor?.contact_source ?? "",
     notes: proveedor?.notes ?? "",
+    contact_confidence: proveedor?.contact_confidence ?? null,
+    national: proveedor?.national ?? false,
   });
+  const [cats, setCats] = useState<Set<string>>(new Set(categoriasActuales));
   const [guardando, setGuardando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
+
+  const raices = categorias.filter((c) => !c.parent_id).sort((a, b) => a.sort - b.sort);
 
   const set = (k: keyof CamposProveedor) => (e: { target: { value: string } }) =>
     setF((p) => ({ ...p, [k]: e.target.value }));
@@ -55,6 +68,11 @@ export default function EditorProveedor({
       const g = editando
         ? await editarProveedor(proveedor.id, limpio)
         : await crearProveedor(proyectoId, limpio);
+
+      // Las categorías van después de tener el id, y solo si esta pantalla las
+      // está manejando: si no se pasó la taxonomía, no hay que tocar nada.
+      if (categorias.length) await fijarCategoriasProveedor(g.id, [...cats]);
+
       await onGuardado(g);
       avisar(editando ? "Proveedor actualizado" : "Proveedor creado");
       onCerrar();
@@ -156,6 +174,74 @@ export default function EditorProveedor({
               onChange={set("contact_source")}
               placeholder="Sitio oficial, tarjeta del asesor, llamada del 12/08…" />
           </label>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10, marginTop: 10 }}>
+            <label>
+              <span className="lbl">Confianza del contacto</span>
+              <select
+                className="field" style={{ marginTop: 4 }}
+                value={f.contact_confidence ?? ""}
+                onChange={(e) =>
+                  setF((p) => ({
+                    ...p,
+                    contact_confidence: (e.target.value || null) as ContactConfidence | null,
+                  }))
+                }
+              >
+                <option value="">Sin calificar</option>
+                <option value="alta">Alta — web oficial y contacto publicado</option>
+                <option value="media">Media — fuente secundaria</option>
+                <option value="baja">Baja — referencia indirecta</option>
+              </select>
+            </label>
+            <label style={{ display: "flex", alignItems: "flex-end", gap: 8, paddingBottom: 9 }}>
+              <input
+                type="checkbox"
+                checked={!!f.national}
+                onChange={(e) => setF((p) => ({ ...p, national: e.target.checked }))}
+              />
+              <span style={{ fontSize: 13 }}>Cobertura nacional</span>
+            </label>
+          </div>
+
+          {proveedor?.contact_verified_at && (
+            <div className="note is-ok" style={{ marginTop: 10 }}>
+              Contacto verificado por el equipo. Alguien ya se comunicó de verdad con
+              este proveedor.
+            </div>
+          )}
+
+          {/* Qué categorías atiende: es lo que hace que sus ítems aparezcan solos
+              en la matriz, sin tener que vincularlo ítem por ítem. */}
+          {raices.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <span className="lbl">Qué categorías atiende</span>
+              <p style={{ margin: "4px 0 8px", fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+                Marque todo lo que este proveedor pueda surtir. Con esto sus ítems
+                aparecen solos en el Centro de cotizaciones: no hay que vincularlo
+                ítem por ítem.
+              </p>
+              <div className="cells">
+                {raices.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="chip"
+                    aria-pressed={cats.has(c.id)}
+                    onClick={() =>
+                      setCats((s) => {
+                        const n = new Set(s);
+                        n.has(c.id) ? n.delete(c.id) : n.add(c.id);
+                        return n;
+                      })
+                    }
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <label style={{ display: "block", marginTop: 10 }}>
             <span className="lbl">Notas</span>

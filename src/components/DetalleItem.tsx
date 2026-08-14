@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Item, ItemQuoteStats, Project, Quote, Supplier } from "../lib/types";
+import type { Category, Item, ItemQuoteStats, Project, Quote, Supplier } from "../lib/types";
 import {
   ESTADOS, alertaDe, cop, contactoRapido, copiar, enlaceWhatsApp, mensajeItem,
 } from "../lib/dominio";
@@ -12,6 +12,18 @@ import { useAuth } from "../lib/auth";
 import EditorProveedor from "./EditorProveedor";
 import EditorItem from "./EditorItem";
 
+/** La raíz de una categoría, o ella misma si ya lo es. */
+function raizDe(categoryId: string, categorias: Category[]): string {
+  return categorias.find((c) => c.id === categoryId)?.parent_id ?? categoryId;
+}
+
+/** Categorías que un proveedor tiene declaradas, a partir del mapa inverso. */
+function categoriasDe(supplierId: string, coberturas: Record<string, string[]>): string[] {
+  return Object.entries(coberturas)
+    .filter(([, provs]) => provs.includes(supplierId))
+    .map(([catId]) => catId);
+}
+
 interface Props {
   item: Item;
   proyecto: Project;
@@ -19,6 +31,10 @@ interface Props {
   proveedores: Supplier[];
   /** Todos los de la obra, para poder vincular más. */
   todosProveedores: Supplier[];
+  /** Taxonomía de la obra, para declarar qué atiende un proveedor nuevo. */
+  categorias: Category[];
+  /** category_id → supplier_id[], para saber qué tiene marcado cada proveedor. */
+  coberturas: Record<string, string[]>;
   stats?: ItemQuoteStats;
   onCambio: (it: Item) => void;
   onRecargarStats: () => void;
@@ -27,7 +43,7 @@ interface Props {
 }
 
 export default function DetalleItem({
-  item, proyecto, proveedores, todosProveedores, stats,
+  item, proyecto, proveedores, todosProveedores, categorias, coberturas, stats,
   onCambio, onRecargarStats, onRecargarTodo,
 }: Props) {
   const { avisar, avisarError } = useToast();
@@ -423,6 +439,10 @@ export default function DetalleItem({
       {creandoProv && (
         <EditorProveedor
           proyectoId={item.project_id}
+          categorias={categorias}
+          // Un proveedor creado desde un ítem casi siempre atiende la categoría
+          // de ese ítem: se deja marcada para no tener que buscarla.
+          categoriasActuales={item.category_id ? [raizDe(item.category_id, categorias)] : []}
           onCerrar={() => setCreandoProv(false)}
           onGuardado={async (nuevo) => {
             // Se crea y se vincula de una vez: si lo está agregando desde un
@@ -437,6 +457,8 @@ export default function DetalleItem({
         <EditorProveedor
           proyectoId={item.project_id}
           proveedor={editandoProv}
+          categorias={categorias}
+          categoriasActuales={categoriasDe(editandoProv.id, coberturas)}
           onCerrar={() => setEditandoProv(null)}
           onGuardado={onRecargarTodo}
           onBorrado={onRecargarTodo}

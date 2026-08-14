@@ -8,14 +8,16 @@ import { ESTADOS, ESTADO_POR_ID, alertaDe, cop, prioridad } from "../lib/dominio
 import { useSincronizacion } from "../lib/realtime";
 import { ToastProvider, useToast } from "../components/Toast";
 import DetalleItem from "../components/DetalleItem";
-import ListaLlamadas from "../components/ListaLlamadas";
+import CentroCotizaciones from "../components/CentroCotizaciones";
+import RevisorCategorias from "../components/RevisorCategorias";
 import Alertas from "../components/Alertas";
 import CuentaModal from "../components/CuentaModal";
 import GestionObras from "../components/GestionObras";
 import EditorItem from "../components/EditorItem";
 import PanelUsuarios from "../components/PanelUsuarios";
 
-type Vista = "cola" | "llamadas" | "alertas" | "proyecto" | "obras" | "usuarios";
+type Vista =
+  | "cola" | "cotizaciones" | "clasificar" | "alertas" | "proyecto" | "obras" | "usuarios";
 type Filtro = "todos" | "sinprecio" | "conprecio" | "rojo" | "abierto";
 
 export default function Dashboard() {
@@ -134,12 +136,22 @@ function Contenido() {
     ? Math.round(((conteos.cerrado + conteos.replantear) / conteos.total) * 100)
     : 0;
 
+  /**
+   * El desplegable se arma con las categorías reales, no con el texto libre:
+   * así "PVC" y "P.V.C." dejan de ser dos entradas distintas. Se listan solo
+   * las que tienen ítems, más una opción para los que quedaron sin clasificar.
+   */
   const categorias = useMemo(() => {
     const m = new Map<string, number>();
+    let sin = 0;
     for (const it of datos?.items ?? []) {
-      if (it.category) m.set(it.category, (m.get(it.category) ?? 0) + 1);
+      if (it.category_id) m.set(it.category_id, (m.get(it.category_id) ?? 0) + 1);
+      else sin++;
     }
-    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const lista = (datos?.categorias ?? [])
+      .filter((c) => m.has(c.id))
+      .map((c) => [c.id, c.name, m.get(c.id)!] as const);
+    return sin > 0 ? [...lista, ["__sin__", "Sin categoría", sin] as const] : lista;
   }, [datos]);
 
   const visibles = useMemo(() => {
@@ -150,7 +162,8 @@ function Contenido() {
         if (filtro === "conprecio" && it.ref_price === null) return false;
         if (filtro === "rojo" && alertaDe(it).sev > 1) return false;
         if (filtro === "abierto" && (it.state === "cerrado" || it.state === "replantear")) return false;
-        if (categoria && it.category !== categoria) return false;
+        if (categoria === "__sin__" && it.category_id) return false;
+        if (categoria && categoria !== "__sin__" && it.category_id !== categoria) return false;
         if (t && !`${it.code} ${it.description} ${it.category ?? ""} ${it.spec ?? ""}`.toLowerCase().includes(t))
           return false;
         return true;
@@ -312,12 +325,13 @@ function Contenido() {
         <div className="tabs" role="tablist">
           {([
             ["cola", "Cola de trabajo"],
-            ["llamadas", "A quién llamo"],
+            ["cotizaciones", "Centro de cotizaciones"],
             ["alertas", "Alertas y notas"],
             ["proyecto", "La obra"],
-            // Crear, importar y borrar obras es solo del administrador. La base
-            // lo exige por RLS; ocultar la pestaña evita el intento fallido.
-            ...(isAdmin ? [["obras", "Gestionar obras"] as const,
+            // Clasificar es ficha técnica del ítem: la base solo deja al
+            // administrador, así que la pestaña tampoco se muestra a los demás.
+            ...(isAdmin ? [["clasificar", "Clasificar ítems"] as const,
+                           ["obras", "Gestionar obras"] as const,
                            ["usuarios", "Personas"] as const] : []),
           ] as const).map(([v, lbl]) => (
             <button key={v} role="tab" aria-selected={vista === v} onClick={() => setVista(v)}>
@@ -350,9 +364,9 @@ function Contenido() {
               ))}
               <select className="sel" value={categoria} onChange={(e) => setCategoria(e.target.value)} aria-label="Filtrar por categoría">
                 <option value="">Todas las categorías</option>
-                {categorias.map(([c, n]) => (
-                  <option key={c} value={c}>
-                    {c} ({n})
+                {categorias.map(([id, nombre, n]) => (
+                  <option key={id} value={id}>
+                    {nombre} ({n})
                   </option>
                 ))}
               </select>
@@ -417,6 +431,8 @@ function Contenido() {
                   proyecto={proyecto}
                   proveedores={provsDelItem}
                   todosProveedores={datos?.proveedores ?? []}
+                  categorias={datos?.categorias ?? []}
+                  coberturas={datos?.coberturas ?? {}}
                   stats={datos?.stats[itemSel.id]}
                   onCambio={aplicarCambio}
                   onRecargarStats={recargarStats}
@@ -431,12 +447,14 @@ function Contenido() {
           </>
         )}
 
-        {vista === "llamadas" && datos && proyecto && (
-          <ListaLlamadas
+        {vista === "cotizaciones" && datos && (
+          <CentroCotizaciones datos={datos} onRecargar={recargar} />
+        )}
+
+        {vista === "clasificar" && datos && isAdmin && (
+          <RevisorCategorias
             items={datos.items}
-            proveedores={datos.proveedores}
-            vinculos={datos.vinculos}
-            proyecto={proyecto}
+            categorias={datos.categorias}
             onRecargar={recargar}
           />
         )}
