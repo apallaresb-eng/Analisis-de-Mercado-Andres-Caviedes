@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Taxonomía de categorías del estudio de mercado
--- 14 categorías raíz · 18 subcategorías
+-- 14 categorías raíz · 46 subcategorías
 --
 -- GENERADO por scripts/generate-seed-categorias.mjs desde TAXONOMIA en
 -- src/lib/clasificador.ts. No lo edite a mano: vuelva a generarlo.
@@ -73,6 +73,14 @@ begin
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Iluminación', 'ILUM', 20)
   on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'ILUM';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Luminarias interiores', 'ILUM-INTERIOR', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Alumbrado público y exterior', 'ILUM-EXTERIOR', 10)
+  on conflict do nothing;
 
   -- --- Redes y datos ---
   insert into public.categories (project_id, parent_id, name, slug, sort)
@@ -129,40 +137,134 @@ begin
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Aparatos sanitarios', 'SANI', 60)
   on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'SANI';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Aparatos y grifería', 'SANI-APARATO', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Accesorios de baño en acero inoxidable', 'SANI-ACCES', 10)
+  on conflict do nothing;
 
   -- --- Concreto y agregados ---
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Concreto y agregados', 'CONC', 70)
+  on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'CONC';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Cemento, concreto y mortero', 'CONC-CEMENTO', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Agregados pétreos', 'CONC-AGREG', 10)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Aditivos y químicos para concreto', 'CONC-ADITIVO', 20)
   on conflict do nothing;
 
   -- --- Acero y metálicos ---
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Acero y metálicos', 'ACERO', 80)
   on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'ACERO';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Acero de refuerzo', 'ACERO-REFUERZO', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Perfilería, lámina y estructural', 'ACERO-ESTRUCT', 10)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Acero inoxidable', 'ACERO-INOX', 20)
+  on conflict do nothing;
 
   -- --- Ferretería y fijaciones ---
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Ferretería y fijaciones', 'FERR', 90)
+  on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'FERR';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Tornillería y fijaciones', 'FERR-FIJACION', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Herramienta y abrasivos', 'FERR-HERRAM', 10)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Selladores, adhesivos y cintas', 'FERR-QUIMICO', 20)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Soldadura y electrodos', 'FERR-SOLDADURA', 30)
   on conflict do nothing;
 
   -- --- Mampostería y prefabricados ---
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Mampostería y prefabricados', 'MAMP', 100)
   on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'MAMP';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Ladrillo y bloque', 'MAMP-LADRILLO', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Prefabricados de concreto', 'MAMP-PREFAB', 10)
+  on conflict do nothing;
 
   -- --- Acabados y pintura ---
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Acabados y pintura', 'ACAB', 110)
+  on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'ACAB';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Pintura y recubrimientos', 'ACAB-PINTURA', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Enchapes, pisos y cerámica', 'ACAB-ENCHAPE', 10)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Impermeabilización', 'ACAB-IMPER', 20)
   on conflict do nothing;
 
   -- --- Carpintería, cubierta y vidrio ---
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Carpintería, cubierta y vidrio', 'CARP', 120)
   on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'CARP';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Madera y carpintería', 'CARP-MADERA', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Aluminio y vidrio', 'CARP-ALUM', 10)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Puertas y cerrajería', 'CARP-PUERTA', 20)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Drywall y cielo raso', 'CARP-DRYWALL', 30)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Cubierta y teja', 'CARP-CUBIERTA', 40)
+  on conflict do nothing;
 
   -- --- Servicios y subcontratos ---
   insert into public.categories (project_id, parent_id, name, slug, sort)
   values (obra, null, 'Servicios y subcontratos', 'SERV', 130)
+  on conflict do nothing;
+  select id into padre from public.categories
+   where project_id = obra and slug = 'SERV';
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Mano de obra y subcontratos', 'SERV-OBRA', 0)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Certificaciones, trámites y pruebas', 'SERV-CERTIF', 10)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Alquiler de equipo', 'SERV-EQUIPO', 20)
+  on conflict do nothing;
+  insert into public.categories (project_id, parent_id, name, slug, sort)
+  values (obra, padre, 'Licencias y soporte de fábrica', 'SERV-LICENCIA', 30)
   on conflict do nothing;
 
   raise notice 'Taxonomía sembrada: % categorías',
@@ -170,7 +272,7 @@ begin
 end $$;
 
 -- --- Verificación ------------------------------------------------------------
--- Deben aparecer 14 raíces y 18 subcategorías (32 filas).
+-- Deben aparecer 14 raíces y 46 subcategorías (60 filas).
 select
   coalesce(p.name, '(raíz)') as categoria_padre,
   c.name,
