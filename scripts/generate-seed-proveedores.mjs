@@ -205,17 +205,29 @@ L.push(`  raise notice 'Proveedores en la obra: % · coberturas declaradas: %',
 end $$;
 
 -- --- Verificación ------------------------------------------------------------
--- Ninguna categoría debe quedar en cero: una categoría sin proveedores no se
--- puede cotizar.
-select c.name as categoria,
-       count(sc.supplier_id) as proveedores,
-       count(*) filter (where s.contact_confidence = 'alta') as confianza_alta
+-- Cuenta la RAMA completa: los proveedores de la raíz más los de sus
+-- subcategorías, contando cada empresa una sola vez.
+--
+-- La versión anterior filtraba por parent_id is null y por eso solo veía lo
+-- declarado en la raíz. Con la mayoría de proveedores registrados en
+-- subcategorías, mostraba una fracción del total y parecía que la carga había
+-- fallado cuando estaba completa.
+select
+  coalesce(p.name, c.name)                     as categoria,
+  count(distinct sc.supplier_id)               as proveedores,
+  count(distinct sc.supplier_id)
+    filter (where s.contact_confidence = 'alta') as confianza_alta
 from public.categories c
+left join public.categories p        on p.id = c.parent_id
 left join public.supplier_categories sc on sc.category_id = c.id
-left join public.suppliers s on s.id = sc.supplier_id
-where c.parent_id is null
-group by c.name, c.sort
-order by c.sort;
+left join public.suppliers s         on s.id = sc.supplier_id
+group by coalesce(p.name, c.name), coalesce(p.sort, c.sort)
+order by coalesce(p.sort, c.sort);
+
+-- Totales. Deben dar ${provs.length} proveedores y ${[...porCategoria.values()].reduce((a, b) => a + b, 0)} coberturas.
+select
+  (select count(*) from public.suppliers)           as proveedores,
+  (select count(*) from public.supplier_categories) as coberturas;
 `);
 
 mkdirSync(dirname(salidaSql), { recursive: true });
