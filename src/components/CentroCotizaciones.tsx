@@ -6,14 +6,15 @@ import {
 } from "../lib/datos";
 import type { Category, Item, Quote, QuoteRequest, Supplier } from "../lib/types";
 import {
-  ESTADO_SOLICITUD_POR_ID, diasDesde, mensajeSolicitud, requiereSeguimiento,
+  ESTADO_SOLICITUD_POR_ID, diasDesde, mensajeCritico, mensajeSolicitud, requiereSeguimiento,
 } from "../lib/dominio";
+import { DIFICULTAD_POR_ID, dificultadDe, separarPorDificultad } from "../lib/dificultad";
 import { combinacionRecomendada, itemsSinCotizar, metricasDeCategoria, pct } from "../lib/cobertura";
 import { useAuth } from "../lib/auth";
 import { useToast } from "./Toast";
 import PanelSolicitud from "./PanelSolicitud";
 
-type Vista = "matriz" | "pipeline" | "cobertura";
+type Vista = "matriz" | "pipeline" | "cobertura" | "criticos";
 
 interface Props {
   datos: DatosProyecto;
@@ -29,6 +30,7 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
   const [creando, setCreando] = useState<string | null>(null);
   const [cotizaciones, setCotizaciones] = useState<Quote[] | null>(null);
   const [catAbierta, setCatAbierta] = useState<string | null>(null);
+  const [expandida, setExpandida] = useState<Set<string>>(new Set());
 
   const { proyecto, items, proveedores, categorias, coberturas, solicitudes, lineas } = datos;
 
@@ -46,53 +48,86 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
     [categorias]
   );
 
-  /**
-   * Ítems de cada categoría raíz, incluyendo los de sus subcategorías: pedir
-   * "PVC" tiene que traer también lo que esté clasificado en "PVC > sanitario".
-   */
-  const itemsPorRaiz = useMemo(() => {
-    const raizDe = new Map<string, string>();
-    for (const c of categorias) raizDe.set(c.id, c.parent_id ?? c.id);
+  const subsDe = useMemo(() => {
+    const m = new Map<string, Category[]>();
+    for (const c of raices) {
+      m.set(c.id, categorias.filter((x) => x.parent_id === c.id).sort((a, b) => a.sort - b.sort));
+    }
+    return m;
+  }, [raices, categorias]);
 
+  /**
+   * Ítems de cada nodo EXACTO, sin acumular en el padre.
+   *
+   * Es la diferencia entre mandarle a un especialista en cable sus 66 ítems, o
+   * mandarle los 347 de todo Eléctricos. Una solicitud de subcategoría tiene
+   * que traer solo lo suyo.
+   */
+  const itemsPorNodo = useMemo(() => {
     const m = new Map<string, Item[]>();
-    for (const c of raices) m.set(c.id, []);
+    for (const c of categorias) m.set(c.id, []);
     for (const it of items) {
       if (!it.category_id) continue;
-      const raiz = raizDe.get(it.category_id);
-      if (raiz) m.get(raiz)?.push(it);
+      m.get(it.category_id)?.push(it);
     }
     return m;
-  }, [items, categorias, raices]);
+  }, [items, categorias]);
 
-  /** Proveedores de cada raíz: los suyos más los declarados en sus subcategorías. */
-  const provsPorRaiz = useMemo(() => {
-    const m = new Map<string, Supplier[]>();
+  /**
+   * Ítems de toda la rama de una raíz. La cobertura se mide sobre la categoría
+   * completa, aunque las solicitudes se manden por subcategoría.
+   */
+  const itemsDeRama = useMemo(() => {
+    const m = new Map<string, Item[]>();
     for (const c of raices) {
-      const ids = new Set(coberturas[c.id] ?? []);
-      for (const sub of categorias.filter((x) => x.parent_id === c.id)) {
-        for (const p of coberturas[sub.id] ?? []) ids.add(p);
-      }
-      m.set(
-        c.id,
-        [...ids].map((id) => provPorId.get(id)).filter((p): p is Supplier => !!p)
-          .sort((a, b) => a.name.localeCompare(b.name))
-      );
+      m.set(c.id, [
+        ...(itemsPorNodo.get(c.id) ?? []),
+        ...(subsDe.get(c.id) ?? []).flatMap((s) => itemsPorNodo.get(s.id) ?? []),
+      ]);
     }
     return m;
-  }, [raices, categorias, coberturas, provPorId]);
+  }, [raices, subsDe, itemsPorNodo]);
 
-  /** Solicitud existente para cada par (categoría raíz, proveedor). */
+  const totalPorRaiz = useMemo(
+    () => new Map([...itemsDeRama].map(([id, l]) => [id, l.length])),
+    [itemsDeRama]
+  );
+
+  /**
+   * Proveedores de cada nodo. Una subcategoría hereda los del padre: quien
+   * declaró que atiende "Eléctricos" atiende también sus cables.
+   */
+  const provsPorNodo = useMemo(() => {
+    const m = new Map<string, Supplier[]>();
+    const resolver = (ids: Set<string>) =>
+      [...ids].map((id) => provPorId.get(id)).filter((p): p is Supplier => !!p)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const c of raices) {
+      // La raíz muestra todo lo suyo y lo de sus hijas, para que la fila
+      // colapsada deje ver con cuánta gente se cuenta en total.
+      const propios = new Set(coberturas[c.id] ?? []);
+      const todos = new Set(propios);
+      for (const sub of subsDe.get(c.id) ?? []) {
+        for (const p of coberturas[sub.id] ?? []) todos.add(p);
+        m.set(sub.id, resolver(new Set([...(coberturas[sub.id] ?? []), ...propios])));
+      }
+      m.set(c.id, resolver(todos));
+    }
+    return m;
+  }, [raices, subsDe, coberturas, provPorId]);
+
+  /** Solicitud existente para cada par (nodo exacto, proveedor). */
   const solicitudPorCelda = useMemo(() => {
     const m = new Map<string, QuoteRequest>();
     for (const s of solicitudes) {
       if (!s.category_id) continue;
-      const raiz = catPorId.get(s.category_id)?.parent_id ?? s.category_id;
-      const k = `${raiz}|${s.supplier_id}`;
+      const k = `${s.category_id}|${s.supplier_id}`;
       // Si hay varias, se muestra la más reciente: solicitudes ya viene ordenada.
       if (!m.has(k)) m.set(k, s);
     }
     return m;
-  }, [solicitudes, catPorId]);
+  }, [solicitudes]);
 
   const itemsPorId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
 
@@ -118,15 +153,27 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
     setSelId(s.id);
   }, [onRecargar]);
 
-  /** Crea la solicitud de una celda vacía y la deja abierta para revisarla. */
+  /**
+   * Crea la solicitud de una celda vacía y la deja abierta para revisarla.
+   *
+   * Los ítems críticos NO entran: un grupo electrógeno de 300 kVA dentro de una
+   * lista de 98 tableros es la forma más segura de que no lo coticen. Van por
+   * su propia ruta desde la vista de Críticos.
+   */
   async function abrirCelda(cat: Category, prov: Supplier) {
     const clave = `${cat.id}|${prov.id}`;
     const existente = solicitudPorCelda.get(clave);
     if (existente) { setSelId(existente.id); return; }
 
-    const lista = itemsPorRaiz.get(cat.id) ?? [];
-    if (!lista.length) {
-      avisarError(new Error(`"${cat.name}" no tiene ítems clasificados todavía.`));
+    const todos = itemsPorNodo.get(cat.id) ?? [];
+    const { normales, criticos } = separarPorDificultad(todos);
+
+    if (!normales.length) {
+      avisarError(new Error(
+        todos.length
+          ? `Todos los ítems de "${cat.name}" son especializados. Créelos desde la pestaña Críticos.`
+          : `"${cat.name}" no tiene ítems clasificados todavía.`
+      ));
       return;
     }
     if (!session) return;
@@ -144,17 +191,60 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
           project_id: proyecto.id,
           supplier_id: prov.id,
           category_id: cat.id,
-          scope: "categoria",
+          scope: cat.parent_id ? "subcategoria" : "categoria",
           code: codigo,
-          message_text: mensajeSolicitud(lista, ctx, cat.name),
+          message_text: mensajeSolicitud(normales, ctx, cat.name, {
+            codigo,
+            tipoProveedor: prov.kind,
+            totalObra: items.length,
+          }),
         },
-        lista.map((i) => i.id),
-        Object.fromEntries(lista.map((i) => [i.id, i.quantity])),
+        normales.map((i) => i.id),
+        Object.fromEntries(normales.map((i) => [i.id, i.quantity])),
         session.user.id
       );
       await onRecargar();
       setSelId(nueva.id);
-      avisar(`Solicitud ${codigo} creada con ${lista.length} ítems`);
+      avisar(
+        criticos.length
+          ? `Solicitud ${codigo} con ${normales.length} ítems. ${criticos.length} especializados quedaron aparte.`
+          : `Solicitud ${codigo} creada con ${normales.length} ítems`
+      );
+    } catch (e) {
+      avisarError(e);
+    } finally {
+      setCreando(null);
+    }
+  }
+
+  /** Solicitud especial para los ítems críticos que se marquen. */
+  async function crearSolicitudCritica(prov: Supplier, criticos: Item[]) {
+    if (!session || !criticos.length) return;
+    setCreando(`critica|${prov.id}`);
+    try {
+      const codigo = siguienteCodigoSolicitud(solicitudes, "ESP", prov.name);
+      const ctx = {
+        nombre: proyecto.name,
+        contrato: proyecto.contract_no,
+        municipio: proyecto.municipality,
+      };
+      const nueva = await crearSolicitud(
+        {
+          project_id: proyecto.id,
+          supplier_id: prov.id,
+          category_id: null,
+          scope: "manual",
+          code: codigo,
+          message_text: mensajeCritico(criticos, ctx, { codigo }),
+        },
+        criticos.map((i) => i.id),
+        Object.fromEntries(criticos.map((i) => [i.id, i.quantity])),
+        session.user.id
+      );
+      await onRecargar();
+      setVista("matriz");
+      setSelId(nueva.id);
+      avisar(`Solicitud especial ${codigo} con ${criticos.length} ítems`);
     } catch (e) {
       avisarError(e);
     } finally {
@@ -173,6 +263,14 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
   }
 
   const sinClasificar = items.filter((i) => !i.category_id).length;
+  const nCriticos = useMemo(() => separarPorDificultad(items).criticos.length, [items]);
+
+  // La vista de críticos también necesita las cotizaciones, para saber cuáles
+  // siguen sin precio después de haber preguntado.
+  useEffect(() => {
+    if (vista !== "criticos" || cotizaciones !== null) return;
+    cargarCotizacionesDeProyecto(proyecto.id).then(setCotizaciones).catch(avisarError);
+  }, [vista, cotizaciones, proyecto.id, avisarError]);
 
   if (!categorias.length) {
     return (
@@ -191,12 +289,14 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
     <>
       <div className="filters">
         {([
-          ["matriz", "Matriz por categoría"],
-          ["pipeline", "Seguimiento"],
-          ["cobertura", "Cobertura"],
-        ] as const).map(([v, lbl]) => (
+          ["matriz", "Matriz por categoría", 0],
+          ["pipeline", "Seguimiento", 0],
+          ["cobertura", "Cobertura", 0],
+          ["criticos", "Críticos", nCriticos],
+        ] as const).map(([v, lbl, n]) => (
           <button key={v} className="chip" aria-pressed={vista === v} onClick={() => setVista(v)}>
             {lbl}
+            {n > 0 && <span className="c mono">{n}</span>}
           </button>
         ))}
         <span style={{ flex: 1 }} />
@@ -215,16 +315,37 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
           {vista === "matriz" && (
             <Matriz
               raices={raices}
-              itemsPorRaiz={itemsPorRaiz}
-              provsPorRaiz={provsPorRaiz}
+              subsDe={subsDe}
+              itemsPorNodo={itemsPorNodo}
+              totalPorRaiz={totalPorRaiz}
+              provsPorNodo={provsPorNodo}
               solicitudPorCelda={solicitudPorCelda}
               proveedores={proveedores}
               creando={creando}
               selId={selId}
+              expandida={expandida}
               catAbierta={catAbierta}
               onAbrirCelda={abrirCelda}
+              onToggleExpandir={(id) =>
+                setExpandida((s) => {
+                  const n = new Set(s);
+                  n.has(id) ? n.delete(id) : n.add(id);
+                  return n;
+                })
+              }
               onToggleCat={(id) => setCatAbierta((a) => (a === id ? null : id))}
               onAgregarProveedor={agregarProveedor}
+            />
+          )}
+
+          {vista === "criticos" && (
+            <Criticos
+              items={items}
+              catPorId={catPorId}
+              proveedores={proveedores}
+              cotizaciones={cotizaciones}
+              creando={creando}
+              onCrear={crearSolicitudCritica}
             />
           )}
 
@@ -242,8 +363,8 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
           {vista === "cobertura" && (
             <Cobertura
               raices={raices}
-              itemsPorRaiz={itemsPorRaiz}
-              provsPorRaiz={provsPorRaiz}
+              itemsPorRaiz={itemsDeRama}
+              provsPorRaiz={provsPorNodo}
               solicitudes={solicitudes}
               cotizaciones={cotizaciones}
             />
@@ -279,46 +400,148 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
    Vista 1 — Matriz categoría × proveedor
    --------------------------------------------------------------------------- */
 function Matriz({
-  raices, itemsPorRaiz, provsPorRaiz, solicitudPorCelda, proveedores, creando, selId,
-  catAbierta, onAbrirCelda, onToggleCat, onAgregarProveedor,
+  raices, subsDe, itemsPorNodo, totalPorRaiz, provsPorNodo, solicitudPorCelda,
+  proveedores, creando, selId, expandida, catAbierta,
+  onAbrirCelda, onToggleExpandir, onToggleCat, onAgregarProveedor,
 }: {
   raices: Category[];
-  itemsPorRaiz: Map<string, Item[]>;
-  provsPorRaiz: Map<string, Supplier[]>;
+  subsDe: Map<string, Category[]>;
+  itemsPorNodo: Map<string, Item[]>;
+  totalPorRaiz: Map<string, number>;
+  provsPorNodo: Map<string, Supplier[]>;
   solicitudPorCelda: Map<string, QuoteRequest>;
   proveedores: Supplier[];
   creando: string | null;
   selId: string | null;
+  expandida: Set<string>;
   catAbierta: string | null;
   onAbrirCelda: (c: Category, p: Supplier) => void;
+  onToggleExpandir: (id: string) => void;
   onToggleCat: (id: string) => void;
   onAgregarProveedor: (c: Category, supplierId: string) => void;
 }) {
+  /** Una fila de celdas para un nodo concreto (raíz o subcategoría). */
+  function Celdas({ nodo, sangria }: { nodo: Category; sangria: boolean }) {
+    const provs = provsPorNodo.get(nodo.id) ?? [];
+    const todos = itemsPorNodo.get(nodo.id) ?? [];
+    const { normales, criticos } = separarPorDificultad(todos);
+    const abierta = catAbierta === nodo.id;
+    const disponibles = proveedores.filter((p) => !provs.some((x) => x.id === p.id));
+
+    if (todos.length === 0) return null;
+
+    return (
+      <div style={sangria ? { marginTop: 10, paddingLeft: 14, borderLeft: "2px solid var(--line-2)" } : { marginTop: 10 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 6 }}>
+          <b style={{ fontSize: 12.5 }}>{sangria ? nodo.name : "Sin subcategoría"}</b>
+          <span className="cn mono">{normales.length} ítems</span>
+          {criticos.length > 0 && (
+            <span
+              className="pill"
+              style={{ ["--pc" as string]: "var(--crit)", ["--pl" as string]: "var(--crit-line)", ["--pb" as string]: "var(--crit-soft)" }}
+              title="Van por la pestaña Críticos, no dentro de esta solicitud"
+            >
+              +{criticos.length} especializados
+            </span>
+          )}
+        </div>
+
+        {provs.length === 0 ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <b style={{ fontSize: 12, color: "var(--crit)" }}>Sin proveedores.</b>
+            <button className="mini" onClick={() => onToggleCat(nodo.id)}>Asignar</button>
+          </div>
+        ) : (
+          <div className="cells">
+            {provs.map((p) => {
+              const s = solicitudPorCelda.get(`${nodo.id}|${p.id}`);
+              const est = s ? ESTADO_SOLICITUD_POR_ID[s.status] : null;
+              const tarde = s ? requiereSeguimiento(s) : false;
+              const dias = s?.sent_at ? diasDesde(s.sent_at) : null;
+              return (
+                <button
+                  key={p.id}
+                  className={`cell${s ? "" : " is-nueva"}${tarde ? " is-alerta" : ""}`}
+                  aria-current={s ? s.id === selId : undefined}
+                  disabled={creando === `${nodo.id}|${p.id}`}
+                  style={{
+                    ["--cc" as string]: est?.color ?? "var(--faint)",
+                    ["--cl" as string]: s && s.id === selId ? "var(--accent)" : est?.linea ?? "var(--line)",
+                    ["--cb" as string]: est?.fondo ?? "var(--surface)",
+                  }}
+                  title={s ? `${s.code} · ${est!.lbl}` : `Crear solicitud de ${nodo.name} para ${p.name} (${normales.length} ítems)`}
+                  onClick={() => onAbrirCelda(nodo, p)}
+                >
+                  <i className="cd" />
+                  {p.name}
+                  <span className="cx">
+                    {s ? (tarde && dias !== null ? `${dias}d` : est!.lbl) : `${normales.length}`}
+                  </span>
+                </button>
+              );
+            })}
+            <button className="cell is-nueva" onClick={() => onToggleCat(nodo.id)} title="Agregar un proveedor">
+              + Proveedor
+            </button>
+          </div>
+        )}
+
+        {abierta && (
+          <div style={{ marginTop: 8 }}>
+            <span className="lbl">Agregar un proveedor que atienda {nodo.name}</span>
+            <select
+              className="field"
+              style={{ marginTop: 4 }}
+              value=""
+              aria-label={`Agregar proveedor a ${nodo.name}`}
+              onChange={(e) => { if (e.target.value) onAgregarProveedor(nodo, e.target.value); }}
+            >
+              <option value="">Elija un proveedor…</option>
+              {disponibles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}{p.city ? ` — ${p.city}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="card" style={{ marginBottom: 12 }}>
-        <h3 style={{ fontSize: 15, marginBottom: 8 }}>Una solicitud por categoría y proveedor</h3>
+        <h3 style={{ fontSize: 15, marginBottom: 8 }}>Una solicitud por subcategoría y proveedor</h3>
         <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--ink-2)" }}>
-          Cada casilla es una solicitud independiente: pedirle <b>PVC</b> a un proveedor no
-          cambia en nada lo que le falte pedirle de <b>Eléctricos</b>, ni afecta a los demás
-          proveedores. Nada desaparece al enviar — el estado queda a la vista.
+          Despliegue la categoría para pedir por línea: a un especialista en cable le llegan
+          sus <b>66 cables</b>, no los 347 ítems de todo Eléctricos. Cada casilla es
+          independiente — pedirle PVC a un proveedor no toca lo que le falte pedirle de otra
+          cosa, y nada desaparece al enviar.
         </p>
       </div>
 
       <div className="cats">
         {raices.map((cat) => {
-          const lista = itemsPorRaiz.get(cat.id) ?? [];
-          const provs = provsPorRaiz.get(cat.id) ?? [];
-          const enviadas = provs.filter(
-            (p) => solicitudPorCelda.get(`${cat.id}|${p.id}`)?.sent_at
-          ).length;
-          const respondidas = provs.filter(
-            (p) => solicitudPorCelda.get(`${cat.id}|${p.id}`)?.responded_at
-          ).length;
-          const avance = provs.length ? enviadas / provs.length : 0;
+          const subs = subsDe.get(cat.id) ?? [];
+          const total = totalPorRaiz.get(cat.id) ?? 0;
+          const provs = provsPorNodo.get(cat.id) ?? [];
+          const abierto = expandida.has(cat.id);
+
+          // Todas las solicitudes de la rama, para el contador de la cabecera.
+          const nodos = [cat, ...subs];
+          let enviadas = 0, respondidas = 0, posibles = 0;
+          for (const n of nodos) {
+            if ((itemsPorNodo.get(n.id) ?? []).length === 0) continue;
+            for (const p of provsPorNodo.get(n.id) ?? []) {
+              posibles++;
+              const s = solicitudPorCelda.get(`${n.id}|${p.id}`);
+              if (s?.sent_at) enviadas++;
+              if (s?.responded_at) respondidas++;
+            }
+          }
           const hueco = provs.length === 0;
-          const abierta = catAbierta === cat.id;
-          const disponibles = proveedores.filter((p) => !provs.some((x) => x.id === p.id));
+          const avance = posibles ? enviadas / posibles : 0;
 
           return (
             <div
@@ -326,14 +549,19 @@ function Matriz({
               key={cat.id}
               style={{ ["--stripe" as string]: hueco ? "var(--crit)" : "var(--accent)" }}
             >
-              <div className="ch">
+              <button
+                className="ch"
+                style={{ background: "none", border: 0, padding: 0, width: "100%", textAlign: "left", cursor: "pointer" }}
+                aria-expanded={abierto}
+                onClick={() => onToggleExpandir(cat.id)}
+              >
+                <span style={{ fontSize: 11, color: "var(--faint)", width: 10 }}>{abierto ? "▾" : "▸"}</span>
                 <h3>{cat.name}</h3>
-                <span className="cn mono">{lista.length} ítems</span>
+                <span className="cn mono">{total} ítems</span>
+                {subs.length > 0 && <span className="cn">{subs.length} líneas</span>}
                 <span style={{ flex: 1 }} />
-                <span className="cn">
-                  {enviadas}/{provs.length} enviadas · {respondidas} respondieron
-                </span>
-              </div>
+                <span className="cn">{enviadas}/{posibles} enviadas · {respondidas} respondieron</span>
+              </button>
 
               {!hueco && (
                 <div className="cbar">
@@ -341,70 +569,170 @@ function Matriz({
                 </div>
               )}
 
-              {hueco ? (
+              {hueco && (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
                   <b style={{ fontSize: 12.5, color: "var(--crit)" }}>
                     Sin proveedores: esta categoría no se puede cotizar.
                   </b>
-                  <button className="mini" onClick={() => onToggleCat(cat.id)}>
-                    Asignar proveedores
-                  </button>
-                </div>
-              ) : (
-                <div className="cells">
-                  {provs.map((p) => {
-                    const s = solicitudPorCelda.get(`${cat.id}|${p.id}`);
-                    const est = s ? ESTADO_SOLICITUD_POR_ID[s.status] : null;
-                    const tarde = s ? requiereSeguimiento(s) : false;
-                    const dias = s?.sent_at ? diasDesde(s.sent_at) : null;
-                    return (
-                      <button
-                        key={p.id}
-                        className={`cell${s ? "" : " is-nueva"}${tarde ? " is-alerta" : ""}`}
-                        aria-current={s ? s.id === selId : undefined}
-                        disabled={creando === `${cat.id}|${p.id}`}
-                        style={{
-                          ["--cc" as string]: est?.color ?? "var(--faint)",
-                          ["--cl" as string]: s && s.id === selId ? "var(--accent)" : est?.linea ?? "var(--line)",
-                          ["--cb" as string]: est?.fondo ?? "var(--surface)",
-                        }}
-                        title={s ? `${s.code} · ${est!.lbl}` : `Crear solicitud de ${cat.name} para ${p.name}`}
-                        onClick={() => onAbrirCelda(cat, p)}
-                      >
-                        <i className="cd" />
-                        {p.name}
-                        {s
-                          ? <span className="cx">{tarde && dias !== null ? `${dias}d` : est!.lbl}</span>
-                          : <span className="cx">+</span>}
-                      </button>
-                    );
-                  })}
-                  <button className="cell is-nueva" onClick={() => onToggleCat(cat.id)} title="Agregar un proveedor a esta categoría">
-                    + Proveedor
-                  </button>
+                  <button className="mini" onClick={() => onToggleCat(cat.id)}>Asignar proveedores</button>
                 </div>
               )}
 
-              {abierta && (
-                <div style={{ marginTop: 10 }}>
-                  <span className="lbl">Agregar un proveedor que atienda {cat.name}</span>
-                  <select
-                    className="field"
-                    style={{ marginTop: 4 }}
-                    value=""
-                    aria-label={`Agregar proveedor a ${cat.name}`}
-                    onChange={(e) => { if (e.target.value) onAgregarProveedor(cat, e.target.value); }}
-                  >
-                    <option value="">Elija un proveedor…</option>
-                    {disponibles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}{p.city ? ` — ${p.city}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              {abierto && !hueco && (
+                <>
+                  <Celdas nodo={cat} sangria={false} />
+                  {subs.map((s) => <Celdas key={s.id} nodo={s} sangria />)}
+                </>
               )}
             </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Vista 4 — Ítems críticos
+   --------------------------------------------------------------------------- */
+function Criticos({
+  items, catPorId, proveedores, cotizaciones, creando, onCrear,
+}: {
+  items: Item[];
+  catPorId: Map<string, Category>;
+  proveedores: Supplier[];
+  cotizaciones: Quote[] | null;
+  creando: string | null;
+  onCrear: (p: Supplier, items: Item[]) => void;
+}) {
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [destino, setDestino] = useState("");
+
+  const criticos = useMemo(() => {
+    const conPrecio = new Set((cotizaciones ?? []).map((q) => q.item_id));
+    return separarPorDificultad(items).criticos
+      .map((it) => ({
+        item: it,
+        ev: dificultadDe(it),
+        sinCotizar: cotizaciones !== null && !conPrecio.has(it.id),
+      }))
+      .sort((a, b) =>
+        Number(b.sinCotizar) - Number(a.sinCotizar) || b.ev.puntaje - a.ev.puntaje
+      );
+  }, [items, cotizaciones]);
+
+  const sinCotizar = criticos.filter((c) => c.sinCotizar).length;
+
+  if (!criticos.length) {
+    return <div className="empty">No hay ítems marcados como especializados.</div>;
+  }
+
+  return (
+    <>
+      <div className="card" style={{ marginBottom: 12 }}>
+        <h3 style={{ fontSize: 15, marginBottom: 8 }}>Los que ningún mayorista va a tener</h3>
+        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--ink-2)" }}>
+          Un grupo electrógeno dentro de una lista de 98 tableros no lo cotiza nadie: el
+          vendedor ve que no es lo suyo y no responde. Estos salen de las solicitudes
+          normales y van directo al fabricante, pidiendo <b>equivalente homologado</b> —
+          que es lo que en la práctica destraba la compra.
+        </p>
+        <div className="statbar" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
+          <div>
+            <span className="lbl">Especializados</span>
+            <span className="sv mono" style={{ color: "var(--crit)" }}>{criticos.length}</span>
+          </div>
+          <div>
+            <span className="lbl">Todavía sin cotizar</span>
+            <span className="sv mono" style={{ color: cotizaciones === null ? "var(--faint)" : "var(--warn)" }}>
+              {cotizaciones === null ? "…" : sinCotizar}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="filters">
+        <span className="lbl">{marcados.size} marcados</span>
+        <select
+          className="sel"
+          value={destino}
+          onChange={(e) => setDestino(e.target.value)}
+          aria-label="Proveedor de la solicitud especial"
+        >
+          <option value="">Pedir los marcados a…</option>
+          {proveedores.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}{p.city ? ` — ${p.city}` : ""}</option>
+          ))}
+        </select>
+        <button
+          className="btn"
+          disabled={!destino || marcados.size === 0 || creando !== null}
+          onClick={() => {
+            const prov = proveedores.find((p) => p.id === destino);
+            if (!prov) return;
+            onCrear(prov, criticos.filter((c) => marcados.has(c.item.id)).map((c) => c.item));
+            setMarcados(new Set());
+          }}
+        >
+          Crear solicitud especial
+        </button>
+        {marcados.size > 0 && (
+          <button className="mini" onClick={() => setMarcados(new Set())}>Desmarcar</button>
+        )}
+      </div>
+
+      <div className="revlist">
+        {criticos.map(({ item, ev, sinCotizar: sc }) => {
+          const def = DIFICULTAD_POR_ID[ev.nivel];
+          const cat = item.category_id ? catPorId.get(item.category_id) : null;
+          return (
+            <button
+              key={item.id}
+              className="revrow"
+              aria-selected={marcados.has(item.id)}
+              onClick={() =>
+                setMarcados((s) => {
+                  const n = new Set(s);
+                  n.has(item.id) ? n.delete(item.id) : n.add(item.id);
+                  return n;
+                })
+              }
+            >
+              <input
+                type="checkbox"
+                checked={marcados.has(item.id)}
+                onChange={() => {}}
+                onClick={(e) => e.stopPropagation()}
+                aria-label={`Marcar ${item.code}`}
+              />
+              <span className="mono" style={{ fontSize: 11, color: "var(--faint)", fontWeight: 700 }}>
+                {item.code}
+              </span>
+              <span style={{ overflow: "hidden" }}>
+                <span className="rd" style={{ display: "block" }} title={item.description}>
+                  {item.description}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--faint)" }}>
+                  {cat?.name ?? "Sin categoría"} · {ev.razones.join(" · ")}
+                </span>
+              </span>
+              <span style={{ display: "flex", gap: 5, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                {sc && (
+                  <span
+                    className="pill"
+                    style={{ ["--pc" as string]: "var(--warn)", ["--pl" as string]: "var(--warn-line)", ["--pb" as string]: "var(--warn-soft)" }}
+                  >
+                    Sin cotizar
+                  </span>
+                )}
+                <span
+                  className="pill"
+                  style={{ ["--pc" as string]: def.color, ["--pl" as string]: def.linea, ["--pb" as string]: def.fondo }}
+                >
+                  {def.lbl}
+                </span>
+              </span>
+            </button>
           );
         })}
       </div>
