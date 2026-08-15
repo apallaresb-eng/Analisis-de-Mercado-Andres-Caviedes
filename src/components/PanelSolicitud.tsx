@@ -5,7 +5,7 @@ import {
 } from "../lib/datos";
 import {
   ESTADOS_SOLICITUD, ESTADO_SOLICITUD_POR_ID, asuntoSolicitud, contactoRapido, copiar,
-  diasDesde, enlaceDemasiadoLargo, enlaceWhatsApp, fecha, formatearPlazo,
+  diasDeAtraso, enlaceDemasiadoLargo, enlaceWhatsApp, fecha, formatearPlazo,
   listaCompletaSolicitud, mensajeCritico, mensajeSeguimiento, mensajeSolicitud,
   requiereSeguimiento,
 } from "../lib/dominio";
@@ -39,13 +39,18 @@ export default function PanelSolicitud({
   const [editado, setEditado] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [ocupado, setOcupado] = useState(false);
-  // Por defecto una semana: es el plazo que un proveedor grande alcanza a
-  // cumplir sin que la obra se detenga esperando.
+  // La guardada manda. Si no hay, una semana por defecto: es el plazo que un
+  // proveedor grande alcanza a cumplir sin que la obra se detenga esperando.
   const [plazoISO, setPlazoISO] = useState(() => {
+    if (solicitud.due_date) return solicitud.due_date;
     const d = new Date();
     d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
   });
+
+  useEffect(() => {
+    if (solicitud.due_date) setPlazoISO(solicitud.due_date);
+  }, [solicitud.id, solicitud.due_date]);
 
   const ctx = {
     nombre: proyecto.name,
@@ -82,7 +87,9 @@ export default function PanelSolicitud({
   const est = ESTADO_SOLICITUD_POR_ID[solicitud.status];
   const enlace = enlaceWhatsApp(proveedor, mensaje);
   const largo = enlaceDemasiadoLargo(mensaje);
-  const dias = diasDesde(solicitud.sent_at);
+  // Cuando hay fecha límite, los días que importan son los de atraso frente a
+  // ella, no los que pasaron desde el envío.
+  const dias = diasDeAtraso(solicitud);
   const atrasada = requiereSeguimiento(solicitud);
 
   const listaCompleta = useMemo(
@@ -106,9 +113,12 @@ export default function PanelSolicitud({
   async function confirmarEnvio() {
     setOcupado(true);
     try {
+      // Se guarda también el plazo: es contra esa fecha que el seguimiento va
+      // a medir, y el mensaje que se acaba de enviar ya la menciona.
       await actualizarSolicitud(solicitud.id, {
         message_text: mensaje,
         whatsapp_url: enlace,
+        due_date: plazoISO || null,
       });
       onCambio(await marcarSolicitudEnviada(solicitud.id, "whatsapp"));
       setConfirmando(false);
@@ -232,6 +242,15 @@ export default function PanelSolicitud({
           style={{ marginTop: 4 }}
           value={plazoISO}
           onChange={(e) => { setPlazoISO(e.target.value); setEditado(false); }}
+          onBlur={async (e) => {
+            const v = e.target.value || null;
+            if (v === (solicitud.due_date ?? null)) return;
+            try {
+              onCambio(await actualizarSolicitud(solicitud.id, { due_date: v }));
+            } catch (err) {
+              avisarError(err);
+            }
+          }}
           aria-label="Fecha límite de respuesta"
         />
         <p style={{ margin: "5px 0 0", fontSize: 11.5, color: "var(--muted)", lineHeight: 1.5 }}>

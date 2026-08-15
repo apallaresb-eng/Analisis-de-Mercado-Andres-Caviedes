@@ -65,11 +65,25 @@ export const DIAS_SEGUIMIENTO = 4;
 /**
  * Se calcula, no se guarda: un campo "requiere seguimiento" almacenado queda
  * desactualizado en cuanto pasa un día y nadie abre la aplicación.
+ *
+ * Manda la fecha límite acordada cuando existe. Solo si no se fijó ninguna se
+ * cae al umbral fijo, porque tratar igual una solicitud urgente y una holgada
+ * hace perseguir a quien todavía está en plazo.
  */
 export function requiereSeguimiento(s: QuoteRequest): boolean {
   if (s.status !== "enviada") return false;
+  if (s.due_date) return new Date(s.due_date + "T23:59:59") < new Date();
   const d = diasDesde(s.sent_at);
   return d !== null && d >= DIAS_SEGUIMIENTO;
+}
+
+/** Días de atraso frente a la fecha límite, o desde el envío si no hay fecha. */
+export function diasDeAtraso(s: QuoteRequest): number | null {
+  if (s.due_date) {
+    const d = Math.floor((Date.now() - new Date(s.due_date + "T23:59:59").getTime()) / 86_400_000);
+    return d > 0 ? d : null;
+  }
+  return diasDesde(s.sent_at);
 }
 
 /* ---------------------------------------------------------------------------

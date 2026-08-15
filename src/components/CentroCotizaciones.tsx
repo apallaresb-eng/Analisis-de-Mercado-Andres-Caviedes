@@ -6,7 +6,7 @@ import {
 } from "../lib/datos";
 import type { Category, Item, Quote, QuoteRequest, Supplier } from "../lib/types";
 import {
-  ESTADO_SOLICITUD_POR_ID, diasDesde, mensajeCritico, mensajeSolicitud, requiereSeguimiento,
+  ESTADO_SOLICITUD_POR_ID, diasDeAtraso, mensajeCritico, mensajeSolicitud, requiereSeguimiento,
 } from "../lib/dominio";
 import { DIFICULTAD_POR_ID, dificultadDe, separarPorDificultad } from "../lib/dificultad";
 import { combinacionRecomendada, itemsSinCotizar, metricasDeCategoria, pct } from "../lib/cobertura";
@@ -457,7 +457,7 @@ function Matriz({
               const s = solicitudPorCelda.get(`${nodo.id}|${p.id}`);
               const est = s ? ESTADO_SOLICITUD_POR_ID[s.status] : null;
               const tarde = s ? requiereSeguimiento(s) : false;
-              const dias = s?.sent_at ? diasDesde(s.sent_at) : null;
+              const dias = s ? diasDeAtraso(s) : null;
               return (
                 <button
                   key={p.id}
@@ -784,7 +784,7 @@ function Pipeline({
                 lista.map((s) => {
                   const est = ESTADO_SOLICITUD_POR_ID[s.status];
                   const tarde = requiereSeguimiento(s);
-                  const dias = diasDesde(s.sent_at);
+                  const dias = diasDeAtraso(s);
                   const n = (lineas[s.id] ?? []).length;
                   return (
                     <button

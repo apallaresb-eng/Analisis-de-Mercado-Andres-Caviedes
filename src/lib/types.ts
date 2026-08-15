@@ -115,6 +115,8 @@ export interface QuoteRequest {
   channel: RequestChannel | null;
   message_text: string | null;
   whatsapp_url: string | null;
+  /** Fecha límite acordada. El seguimiento la usa en vez del umbral fijo. */
+  due_date: string | null;
   sent_at: string | null;
   responded_at: string | null;
   last_interaction_at: string | null;

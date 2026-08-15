@@ -487,6 +487,7 @@ export interface CambioSolicitud {
   channel?: RequestChannel | null;
   message_text?: string | null;
   whatsapp_url?: string | null;
+  due_date?: string | null;
   sent_at?: string | null;
   responded_at?: string | null;
   notes?: string | null;
