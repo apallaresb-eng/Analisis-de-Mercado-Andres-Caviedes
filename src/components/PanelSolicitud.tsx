@@ -5,9 +5,13 @@ import {
 } from "../lib/datos";
 import {
   ESTADOS_SOLICITUD, ESTADO_SOLICITUD_POR_ID, asuntoSolicitud, contactoRapido, copiar,
-  diasDesde, enlaceDemasiadoLargo, enlaceWhatsApp, fecha, listaCompletaSolicitud,
-  mensajeSolicitud, requiereSeguimiento,
+  diasDesde, enlaceDemasiadoLargo, enlaceWhatsApp, fecha, formatearPlazo,
+  listaCompletaSolicitud, mensajeCritico, mensajeSeguimiento, mensajeSolicitud,
+  requiereSeguimiento,
 } from "../lib/dominio";
+import {
+  descargar, generarSolicitudCriticaExcel, generarSolicitudExcel, nombreSolicitudArchivo,
+} from "../lib/solicitudExcel";
 import { useAuth } from "../lib/auth";
 import { useToast } from "./Toast";
 
@@ -17,13 +21,16 @@ interface Props {
   categoria: Category | null;
   items: Item[];
   proyecto: Project;
+  /** Total de ítems de la obra. Es la palanca de volumen en el mensaje. */
+  totalObra: number;
   onCambio: (s: QuoteRequest) => void;
   onRecargar: () => void | Promise<void>;
   onCerrar: () => void;
 }
 
 export default function PanelSolicitud({
-  solicitud, proveedor, categoria, items, proyecto, onCambio, onRecargar, onCerrar,
+  solicitud, proveedor, categoria, items, proyecto, totalObra,
+  onCambio, onRecargar, onCerrar,
 }: Props) {
   const { isAdmin } = useAuth();
   const { avisar, avisarError } = useToast();
@@ -32,6 +39,13 @@ export default function PanelSolicitud({
   const [editado, setEditado] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [ocupado, setOcupado] = useState(false);
+  // Por defecto una semana: es el plazo que un proveedor grande alcanza a
+  // cumplir sin que la obra se detenga esperando.
+  const [plazoISO, setPlazoISO] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().slice(0, 10);
+  });
 
   const ctx = {
     nombre: proyecto.name,
@@ -39,13 +53,26 @@ export default function PanelSolicitud({
     municipio: proyecto.municipality,
   };
 
+  // Una solicitud "manual" es la de los ítems críticos: pide equivalente
+  // homologado en vez de precio de catálogo.
+  const esCritica = solicitud.scope === "manual";
+  const plazo = formatearPlazo(plazoISO);
+
   // El mensaje se regenera cuando cambia la solicitud o su lista de ítems, pero
   // NUNCA pisa lo que la persona haya escrito a mano.
   useEffect(() => {
     if (editado) return;
-    setMensaje(solicitud.message_text || mensajeSolicitud(items, ctx, categoria?.name ?? null));
+    const generado = esCritica
+      ? mensajeCritico(items, ctx, { codigo: solicitud.code, plazo })
+      : mensajeSolicitud(items, ctx, categoria?.name ?? null, {
+          codigo: solicitud.code,
+          tipoProveedor: proveedor.kind,
+          plazo,
+          totalObra,
+        });
+    setMensaje(solicitud.message_text || generado);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [solicitud.id, items.length, categoria?.id]);
+  }, [solicitud.id, items.length, categoria?.id, plazoISO]);
 
   useEffect(() => {
     setEditado(false);
@@ -86,6 +113,23 @@ export default function PanelSolicitud({
       onCambio(await marcarSolicitudEnviada(solicitud.id, "whatsapp"));
       setConfirmando(false);
       avisar("Solicitud registrada como enviada");
+    } catch (e) {
+      avisarError(e);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  /** Genera y baja el adjunto. El crítico lleva su propio formato. */
+  async function descargarAdjunto() {
+    setOcupado(true);
+    try {
+      const datos = { solicitud, items, proveedor, categoria, proyecto, plazo };
+      const blob = esCritica
+        ? await generarSolicitudCriticaExcel(datos)
+        : await generarSolicitudExcel(datos);
+      descargar(blob, nombreSolicitudArchivo(solicitud));
+      avisar("Adjunto descargado. Ahora ábralo en WhatsApp junto al mensaje.");
     } catch (e) {
       avisarError(e);
     } finally {
@@ -179,6 +223,23 @@ export default function PanelSolicitud({
         )}
       </div>
 
+      {/* --- Plazo --- */}
+      <div className="sec">
+        <span className="lbl">Fecha límite de respuesta</span>
+        <input
+          type="date"
+          className="field"
+          style={{ marginTop: 4 }}
+          value={plazoISO}
+          onChange={(e) => { setPlazoISO(e.target.value); setEditado(false); }}
+          aria-label="Fecha límite de respuesta"
+        />
+        <p style={{ margin: "5px 0 0", fontSize: 11.5, color: "var(--muted)", lineHeight: 1.5 }}>
+          Una fecha concreta obliga a un sí o un no. Un «no alcanzo» también sirve:
+          libera el cupo para otro proveedor.
+        </p>
+      </div>
+
       {/* --- Mensaje --- */}
       <div className="sec">
         <span className="lbl">Mensaje</span>
@@ -195,6 +256,19 @@ export default function PanelSolicitud({
           </div>
         )}
 
+        {/* La descarga va PRIMERO porque ese es el orden real de trabajo:
+            se baja el archivo, se abre WhatsApp y se adjunta. Al revés, el
+            mensaje sale sin el adjunto. */}
+        <div className="btns">
+          <button
+            className="btn"
+            disabled={ocupado || items.length === 0}
+            onClick={() => void descargarAdjunto()}
+          >
+            1 · Descargar solicitud (Excel)
+          </button>
+        </div>
+
         <div className="btns">
           {enlace ? (
             <a
@@ -205,7 +279,7 @@ export default function PanelSolicitud({
               style={{ textDecoration: "none" }}
               onClick={() => setConfirmando(true)}
             >
-              Enviar por WhatsApp
+              2 · Enviar por WhatsApp
             </a>
           ) : (
             <button className="btn" disabled title="El proveedor no tiene un celular registrado">
@@ -249,6 +323,37 @@ export default function PanelSolicitud({
         {/* Se pregunta DESPUÉS de abrir WhatsApp, no al pulsar el enlace: abrir
             la aplicación y cerrarla sin mandar nada no es haber contactado a
             nadie, y antes eso quedaba registrado como si sí. */}
+        {/* Aparece sola cuando la solicitud ya venció su espera. */}
+        {atrasada && dias !== null && (
+          <div className="banner is-crit" style={{ marginTop: 10 }}>
+            <b>Sin respuesta hace {dias} días.</b>
+            <div className="btns">
+              <a
+                className="btn"
+                href={enlaceWhatsApp(proveedor, mensajeSeguimiento(solicitud, categoria?.name ?? null, dias)) ?? "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ textDecoration: "none" }}
+              >
+                Enviar recordatorio
+              </a>
+              <button
+                className="btn ghost"
+                onClick={async () => {
+                  (await copiar(mensajeSeguimiento(solicitud, categoria?.name ?? null, dias)))
+                    ? avisar("Recordatorio copiado")
+                    : avisarError(new Error("No se pudo copiar."));
+                }}
+              >
+                Copiar recordatorio
+              </button>
+              <button className="btn ghost" disabled={ocupado} onClick={() => void cambiarEstado("sin_respuesta")}>
+                Marcar sin respuesta
+              </button>
+            </div>
+          </div>
+        )}
+
         {confirmando && solicitud.status === "borrador" && (
           <div className="banner" style={{ marginTop: 10 }}>
             <b>¿Alcanzó a enviar el mensaje?</b>

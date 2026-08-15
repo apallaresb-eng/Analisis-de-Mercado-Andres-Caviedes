@@ -211,37 +211,110 @@ export function mensajeProveedor(items: Item[], p: CtxProyecto): string {
  */
 export const MAX_ITEMS_WHATSAPP = 25;
 
+/**
+ * Ajuste del mensaje según con quién se está hablando.
+ *
+ * El más importante es el del fabricante: muchos no venden directo, y sin
+ * preguntarlo de entrada se pierde una semana esperando una cotización que
+ * nunca iba a llegar.
+ */
+function cierrePorTipo(kind: string | null): string {
+  const k = (kind ?? "").toLowerCase();
+  if (/fabricante|productor/.test(k))
+    return "¿Cotizan directo o nos indica su distribuidor autorizado para Santander?";
+  if (/integrador|ingenier/.test(k))
+    return "¿Nos pueden cotizar suministro, y si aplica, el alcance de instalación?";
+  if (/organismo|laboratorio/.test(k))
+    return "¿Nos confirman alcance, vigencia del dictamen y valor del servicio?";
+  if (/alquiler/.test(k))
+    return "¿Nos confirman tarifa, tiempo mínimo de alquiler y transporte hasta la obra?";
+  return "¿Nos confirma si la puede enviar?";
+}
+
+/**
+ * El abridor. NO lleva la lista de ítems: esa va en el Excel adjunto.
+ *
+ * Un WhatsApp con 98 líneas se lee como spam y no lo contesta nadie. Uno de
+ * cinco líneas con un archivo adjunto se lee como trabajo real de una obra
+ * real. Y como no crece con la cantidad de ítems, nunca desborda el enlace.
+ *
+ * Las dos palancas son ciertas y por eso se usan: el tamaño de la obra —que le
+ * interesa a cualquier proveedor— y una fecha concreta, que obliga a un sí o un
+ * no. Un "no alcanzo" también sirve: libera el cupo para otro.
+ */
 export function mensajeSolicitud(
   items: Item[],
   p: CtxProyecto,
   categoria: string | null,
-  limite: number = MAX_ITEMS_WHATSAPP
+  opciones: {
+    codigo?: string;
+    tipoProveedor?: string | null;
+    plazo?: string | null;
+    totalObra?: number;
+  } = {}
 ): string {
-  const visibles = items.slice(0, limite);
-  const restantes = items.length - visibles.length;
-  const deQue = categoria ? ` de ${categoria}` : "";
   const lugar = p.municipio ? `, obra en ${p.municipio} (Bolívar)` : "";
+  const deQue = categoria ? ` de ${categoria}` : "";
+  const ref = opciones.codigo ? `Solicitud ${opciones.codigo}: ` : "";
+  const volumen = opciones.totalObra
+    ? `, parte de un presupuesto de ${opciones.totalObra.toLocaleString("es-CO")} ítems para la obra completa`
+    : "";
 
   let s = `Buen día. Consorcio AMG – CPI${lugar}.\n\n`;
-  s += `Necesitamos cotizar ${items.length} ítem(s)${deQue}:\n\n`;
-
-  for (const [i, it] of visibles.entries()) {
-    const cant = it.quantity !== null ? ` — ${it.quantity} ${it.unit ?? ""}`.trimEnd() : "";
-    s += `${i + 1}) ${it.description}${cant}\n`;
-  }
-
-  if (restantes > 0) {
-    s += `\n…y ${restantes} ítem(s) más — le envío la lista completa enseguida.\n`;
-  }
-
-  // Libro1 no trae cantidades. Repetir "por confirmar" en cada línea alarga el
-  // mensaje sin aportar nada; una sola línea al final dice lo mismo.
-  if (items.every((it) => it.quantity === null)) {
-    s += `\nLas cantidades se confirman al adjudicar.\n`;
-  }
-
-  s += `\n¿Nos pueden cotizar? Precio unitario, IVA, disponibilidad y tiempo de entrega.\nGracias.`;
+  s += `${ref}${items.length} ítem(s)${deQue}${volumen}.\n`;
+  s += `Adjunto el listado. Si hay ítems que no maneja, cotice los que sí.\n\n`;
+  s += opciones.plazo
+    ? `Agradecemos cotización formal en PDF antes del ${opciones.plazo}.\n`
+    : `Agradecemos cotización formal en PDF.\n`;
+  s += cierrePorTipo(opciones.tipoProveedor ?? null);
   return s;
+}
+
+/**
+ * Mensaje para los ítems críticos, que van por fuera de la solicitud masiva.
+ *
+ * Aquí no se pide precio de catálogo: se pregunta si lo maneja y se abre la
+ * puerta al equivalente. En la mayoría de estos casos el ítem exacto no existe
+ * en el mercado local, y lo que destraba la compra es la alternativa técnica,
+ * no insistir con la referencia original.
+ */
+export function mensajeCritico(
+  items: Item[],
+  p: CtxProyecto,
+  opciones: { codigo?: string; plazo?: string | null } = {}
+): string {
+  const lugar = p.municipio ? `, obra en ${p.municipio} (Bolívar)` : "";
+  const ref = opciones.codigo ? ` (${opciones.codigo})` : "";
+
+  let s = `Buen día. Consorcio AMG – CPI${lugar}.\n\n`;
+  s += `Necesitamos ${items.length} ítem(s) especializados de su línea${ref}:\n\n`;
+  for (const it of items.slice(0, 8)) s += `· ${it.description.slice(0, 90)}\n`;
+  if (items.length > 8) s += `· …y ${items.length - 8} más en el adjunto\n`;
+  s += `\n¿Los maneja directamente o nos indica su representante en Santander?\n`;
+  s += `Si tiene un equivalente homologado, agradecemos proponerlo con ficha técnica.`;
+  if (opciones.plazo) s += `\n\nNecesitamos respuesta antes del ${opciones.plazo}.`;
+  return s;
+}
+
+/** Recordatorio corto para la solicitud que ya venció su plazo. */
+export function mensajeSeguimiento(
+  s: QuoteRequest,
+  categoria: string | null,
+  dias: number
+): string {
+  const de = categoria ? ` (${categoria})` : "";
+  return (
+    `Buen día. Retomo la solicitud ${s.code}${de} que le enviamos hace ${dias} días. ` +
+    `¿Alcanzó a revisarla? Si no la puede atender nos avisa y seguimos con otro proveedor. Gracias.`
+  );
+}
+
+/** Fecha límite en el formato que se usa dentro del mensaje. */
+export function formatearPlazo(iso: string | null): string | null {
+  if (!iso) return null;
+  return new Date(iso + "T12:00:00").toLocaleDateString("es-CO", {
+    weekday: "long", day: "numeric", month: "long",
+  });
 }
 
 /**

@@ -257,6 +257,7 @@ export default function CentroCotizaciones({ datos, onRecargar }: Props) {
             categoria={seleccionada.category_id ? catPorId.get(seleccionada.category_id) ?? null : null}
             items={itemsSeleccion}
             proyecto={proyecto}
+            totalObra={items.length}
             onCambio={aplicarCambio}
             onRecargar={onRecargar}
             onCerrar={() => setSelId(null)}
