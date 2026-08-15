@@ -191,6 +191,10 @@ const REGLAS: Regla[] = [
   { cat: "SERV", sub: "EQUIPO", re: /MONTACARGAS|ROSCADORA/ },
   { cat: "SERV", re: /ROTULADO|MATERIAL DE OFICINA|ACPM/, debil: true },
 
+  // Las divisiones sanitarias declaran sus herrajes y su perchero, y eso se las
+  // llevaba a postería de media tensión. Son mobiliario de baño en inoxidable.
+  { cat: "SANI", sub: "ACCES", re: /DIVISION(ES)? SANITARIA|DIVISION(ES)? DE BANO/ },
+
   // --- Redes y datos --------------------------------------------------------
   { cat: "RED", sub: "SEGURI", re: /CCTV|CAMARA|NVR|DVR|CONTROL DE ACCESO|TALANQUERA|BIOMETR|VIDEOPORTERO|ALARMA|INCENDIO|SIRENA|ESTROBO|STOPPER|ESTACION MANUAL|PULSADOR|DETECTOR|ELECTROIMAN|ELECTROIMAN|TORNIQUETE|LECTOR|PROXIMIDAD|WIEGAND|BUZZER|TECLADO REMOTO|PANEL DE INTRUSION|BRAZO HIDRAULICO|CONTROLADORA?( MODULAR)? \d* ?LECTORAS?|EXPANSION CONTROLADOR/ },
   { cat: "RED", sub: "ACTIVO", re: /SWITCH|ACCESS POINT|SFP|ROUTER|FIREWALL|CONTROLADOR|MONITOR|POWERPACK|COMPUTADOR|IMPRESORA|DISCO DURO|TOTEM|TOUCHSCREEN/ },
@@ -200,7 +204,9 @@ const REGLAS: Regla[] = [
   // --- Media y baja tensión -------------------------------------------------
   { cat: "MT", sub: "TRAFO", re: /TRANSFORMADOR|BOMBINADO/ },
   { cat: "MT", sub: "CELDA", re: /CELDA|SECCIONADOR|CORTACIRCUITO|PARARRAY|DPS|15 ?KV|13\.?2 ?KV|MEDIA TENSION/ },
-  { cat: "MT", sub: "POSTE", re: /CRUCETA|AISLADOR|POSTE|ANTIBALANCEO|RETENIDA|HERRAJE|PERCHA|SOPORTE PARA ALAMBRON/ },
+  // \bPERCHA\b con límites: sin ellos, "incluye un perchero" mandaba unas
+  // divisiones sanitarias de baño a postería de media tensión.
+  { cat: "MT", sub: "POSTE", re: /CRUCETA|AISLADOR|POSTE|ANTIBALANCEO|RETENIDA|HERRAJE|\bPERCHA\b|SOPORTE PARA ALAMBRON/ },
 
   // --- Puesta a tierra ------------------------------------------------------
   // Va ANTES de acero: una varilla coperweld y una barra de tierra son de cobre
