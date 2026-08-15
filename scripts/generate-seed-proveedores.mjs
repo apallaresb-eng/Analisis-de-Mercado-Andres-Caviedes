@@ -211,12 +211,54 @@ console.log(`  nacionales  : ${provs.filter((p) => p.national).length}`);
 for (const nivel of ["alta", "media", "baja"]) {
   console.log(`  confianza ${nivel.padEnd(5)}: ${provs.filter((p) => p.contact_confidence === nivel).length}`);
 }
-console.log(`\n  Cobertura por categoría:`);
+/**
+ * Subcategorías de nivel A: las que concentran los ítems o no tienen ninguna
+ * cobertura histórica. Salieron de medir Libro1, y son las que exigen 12-15
+ * proveedores; el resto se conforma con menos o hereda los del padre.
+ */
+const NIVEL_A = new Set([
+  "ELEC-TABLERO", "ELEC-DUCTO", "ELEC-CABLE", "ELEC-SALIDA", "ELEC",
+  "RED-SEGURI", "RED-ESTRUCT", "RED-ACTIVO",
+  "FERR-FIJACION", "PVC", "HID-ROSCADO", "HID-VALVULA", "HID",
+  "MT-CELDA", "MT-POSTE", "ILUM-INTERIOR", "CONC-CEMENTO",
+  "SERV-CERTIF", "SERV-OBRA", "SERV-LICENCIA",
+]);
+const META_A = 12;
+const META_B = 6;
+
+console.log(`\n  Cobertura por categoría y subcategoría:`);
+const faltantes = [];
 for (const c of TAXONOMIA) {
-  const n = porCategoria.get(c.slug) ?? 0;
+  const propios = porCategoria.get(c.slug) ?? 0;
   const subs = c.subs.reduce((a, s) => a + (porCategoria.get(`${c.slug}-${s.slug}`) ?? 0), 0);
-  const t = n + subs;
-  console.log(`    ${String(t).padStart(3)}  ${c.slug.padEnd(6)} ${c.name}${t < 8 ? "   <-- faltan" : ""}`);
+  console.log(`\n    ${String(propios + subs).padStart(3)}  ${c.slug.padEnd(6)} ${c.name}`);
+
+  // El proveedor declarado en la raíz sirve para todas sus subcategorías, así
+  // que el conteo efectivo de una subcategoría los incluye.
+  const nodos = [{ slug: c.slug, name: "(general)", n: propios },
+    ...c.subs.map((s) => ({ slug: `${c.slug}-${s.slug}`, name: s.name,
+      n: (porCategoria.get(`${c.slug}-${s.slug}`) ?? 0) + propios }))];
+
+  for (const nodo of nodos) {
+    const meta = NIVEL_A.has(nodo.slug) ? META_A : META_B;
+    const nivel = NIVEL_A.has(nodo.slug) ? "A" : "B";
+    const falta = nodo.n < meta;
+    if (falta) faltantes.push({ ...nodo, meta, nivel });
+    console.log(
+      `         ${String(nodo.n).padStart(3)}/${String(meta).padStart(2)}  [${nivel}] ${nodo.name}` +
+      (nodo.n === 0 ? "   <-- SIN NINGUNO" : falta ? "   <-- faltan" : "")
+    );
+  }
+}
+
+if (faltantes.length) {
+  const a = faltantes.filter((f) => f.nivel === "A");
+  console.log(`\n  Pendiente: ${faltantes.length} nodos por debajo de la meta (${a.length} de nivel A)`);
+  if (a.length) {
+    console.log(`  Nivel A pendiente: ${a.map((f) => `${f.slug} (${f.n}/${f.meta})`).join(", ")}`);
+  }
+} else {
+  console.log(`\n  Todas las subcategorías alcanzan su meta.`);
 }
 
 // --- Excel para revisar -------------------------------------------------------
