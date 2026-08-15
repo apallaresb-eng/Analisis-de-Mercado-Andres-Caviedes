@@ -13,8 +13,10 @@ dist/
 # Datos de obra: nunca al repositorio.
 # Contienen precios y contactos comerciales de proveedores.
 *.xlsx
+*.pdf
 ~$*
 seed-data/
+Datos Manuales/
 scripts/data/
 supabase/seeds/seed_proveedores.sql
 
