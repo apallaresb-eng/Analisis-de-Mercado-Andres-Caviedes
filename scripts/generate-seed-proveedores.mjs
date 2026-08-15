@@ -91,6 +91,9 @@ for (const p of provs) for (const s of p.categorias) {
   porCategoria.set(s, (porCategoria.get(s) ?? 0) + 1);
 }
 
+/** Nodos que debe tener la taxonomía sembrada para que las coberturas entren. */
+const nNodos = TAXONOMIA.length + TAXONOMIA.reduce((a, c) => a + c.subs.length, 0);
+
 const L = [];
 L.push(`-- ============================================================================
 -- Proveedores investigados — estudio de mercado Simití
@@ -124,6 +127,7 @@ declare
   crudo text := 'PEGUE-AQUI-EL-ID';
   prov  uuid;
   cat   uuid;
+  n_cat integer;
 begin
   if crudo = 'PEGUE-AQUI-EL-ID' then
     raise exception 'No reemplazó el id de la obra. Vea: select id, name from public.projects;';
@@ -136,6 +140,14 @@ begin
 
   if not exists (select 1 from public.categories where project_id = obra) then
     raise exception 'La obra no tiene categorías. Corra primero seed_categorias.sql.';
+  end if;
+
+  -- La taxonomía tiene que estar completa ANTES de cargar coberturas. Si está
+  -- desactualizada, los proveedores entran pero pierden la mitad de sus líneas.
+  select count(*) into n_cat from public.categories where project_id = obra;
+  if n_cat < ${nNodos} then
+    raise exception
+      'La taxonomía está incompleta: hay % categorías y se esperan ${nNodos}. Corra primero la versión actualizada de seed_categorias.sql.', n_cat;
   end if;
 `);
 
@@ -172,12 +184,16 @@ for (const p of provs) {
   end if;`);
 
   for (const slug of p.categorias) {
+    // Si la categoría no existe se ABORTA, no se salta. Saltarla en silencio
+    // fue lo que hizo que una taxonomía desactualizada cargara los proveedores
+    // pero perdiera la mitad de sus coberturas sin que nadie se enterara.
     L.push(`  select id into cat from public.categories where project_id = obra and slug = ${S(slug)};
-  if cat is not null then
-    insert into public.supplier_categories (supplier_id, category_id, strength)
-    values (prov, cat, ${slug.includes("-") ? 3 : 2})
-    on conflict do nothing;
-  end if;`);
+  if cat is null then
+    raise exception 'No existe la categoría % en esta obra. Corra primero seed_categorias.sql actualizado.', ${S(slug)};
+  end if;
+  insert into public.supplier_categories (supplier_id, category_id, strength)
+  values (prov, cat, ${slug.includes("-") ? 3 : 2})
+  on conflict do nothing;`);
   }
   L.push("");
 }
